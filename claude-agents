@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""
+claude-agents — live terminal dashboard for Claude Code sessions & agents.
+Run in a separate pane: claude-agents
+"""
+
+import curses
+import os
+import sqlite3
+from datetime import datetime
+
+# Resolve symlinks so DB_PATH always points to ~/.claude/ccnotify/ccnotify.db
+DB_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "ccnotify.db")
+
+MAX_COMPLETED_AGENTS = 10
+MAX_HISTORY = 20
+
+
+def query_db(db_path: str) -> dict:
+    data = {
+        "active_sessions": [],
+        "running_agents": [],
+        "completed_agents": [],
+        "recent_prompts": [],
+    }
+    if not os.path.exists(db_path):
+        return data
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Active sessions: latest prompt per session, last 2 hours, no stale orphans
+        # Include lastWaitUserAt to distinguish running vs waiting
+        for row in conn.execute(
+            """SELECT p.session_id, p.prompt, p.cwd, p.created_at, p.seq, p.lastWaitUserAt
+               FROM prompt p
+               INNER JOIN (
+                   SELECT session_id, MAX(id) as max_id
+                   FROM prompt
+                   WHERE stoped_at IS NULL
+                     AND created_at > datetime('now', '-2 hours')
+                   GROUP BY session_id
+               ) latest ON p.id = latest.max_id
+               ORDER BY p.created_at DESC
+               LIMIT 10"""
+        ):
+            data["active_sessions"].append(dict(row))
+
+        # Running agents (skip ghosts with empty type)
+        for row in conn.execute(
+            """SELECT agent_id, agent_type, session_id, cwd, started_at
+               FROM agent
+               WHERE stopped_at IS NULL AND agent_type != ''
+               ORDER BY started_at ASC"""
+        ):
+            data["running_agents"].append(dict(row))
+
+        # Completed agents (skip ghosts)
+        for row in conn.execute(
+            f"""SELECT agent_id, agent_type, session_id, cwd, started_at, stopped_at
+                FROM agent
+                WHERE stopped_at IS NOT NULL AND agent_type != ''
+                ORDER BY stopped_at DESC
+                LIMIT {MAX_COMPLETED_AGENTS}"""
+        ):
+            data["completed_agents"].append(dict(row))
+
+        # Recent completed prompts (skip system/task-notification noise)
+        for row in conn.execute(
+            f"""SELECT session_id, prompt, cwd, created_at, stoped_at, seq
+                FROM prompt
+                WHERE stoped_at IS NOT NULL
+                  AND prompt NOT LIKE '<%'
+                ORDER BY stoped_at DESC
+                LIMIT {MAX_HISTORY}"""
+        ):
+            data["recent_prompts"].append(dict(row))
+
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
+
+    return data
+
+
+def fmt_dur(start_str: str, end_str: str | None = None) -> str:
+    try:
+        start = datetime.fromisoformat(start_str)
+        end = datetime.fromisoformat(end_str) if end_str else datetime.utcnow()
+        secs = max(0, int((end - start).total_seconds()))
+        if secs < 60:
+            return f"{secs}s"
+        m, s = divmod(secs, 60)
+        if m < 60:
+            return f"{m}m{s:02d}s"
+        h, m = divmod(m, 60)
+        return f"{h}h{m:02d}m"
+    except Exception:
+        return "?"
+
+
+def fmt_time(ts: str | None) -> str:
+    if not ts:
+        return ""
+    try:
+        return datetime.fromisoformat(ts).strftime("%H:%M:%S")
+    except Exception:
+        return "?"
+
+
+def short_id(s: str) -> str:
+    return s[:7] if len(s) > 8 else s
+
+
+def short_session(s: str) -> str:
+    return s[:6] if len(s) > 8 else s
+
+
+def short_prompt(p: str | None, maxlen: int = 40) -> str:
+    if not p:
+        return ""
+    p = p.replace("\n", " ").strip()
+    if p.startswith("<"):
+        return ""
+    return p[:maxlen] + ".." if len(p) > maxlen else p
+
+
+def safe_add(stdscr, row: int, col: int, text: str, width: int, attr=0):
+    try:
+        stdscr.addnstr(row, col, text, max(0, width - col), attr)
+    except curses.error:
+        pass
+
+
+def draw(stdscr, frame: int):
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_WHITE, -1)
+    curses.init_pair(3, curses.COLOR_CYAN, -1)
+    curses.init_pair(4, curses.COLOR_YELLOW, -1)
+    curses.init_pair(5, 8, -1)
+    curses.init_pair(6, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(7, curses.COLOR_RED, -1)
+
+    GREEN = curses.color_pair(1) | curses.A_BOLD
+    CYAN = curses.color_pair(3) | curses.A_BOLD
+    YELLOW = curses.color_pair(4) | curses.A_BOLD
+    DIM = curses.color_pair(5)
+    MAGENTA = curses.color_pair(6) | curses.A_BOLD
+    WHITE = curses.color_pair(2)
+    RED = curses.color_pair(7) | curses.A_BOLD
+
+    spins = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    sc = spins[frame % len(spins)]
+
+    data = query_db(DB_PATH)
+    active = data["active_sessions"]
+    r_agents = data["running_agents"]
+    c_agents = data["completed_agents"]
+    recent = data["recent_prompts"]
+
+    total_live = len(active) + len(r_agents)
+    row = 0
+
+    # ── Title bar ──
+    now = datetime.utcnow().strftime("%H:%M:%S")
+    if total_live > 0:
+        title = f" {sc} CLAUDE AGENTS"
+        counts = []
+        if active:
+            counts.append(f"{len(active)} session{'s' if len(active) != 1 else ''}")
+        if r_agents:
+            counts.append(f"{len(r_agents)} agent{'s' if len(r_agents) != 1 else ''}")
+        count_str = f"  {' · '.join(counts)}"
+        title_attr = YELLOW
+    else:
+        title = "   CLAUDE AGENTS"
+        count_str = "  idle"
+        title_attr = GREEN
+
+    safe_add(stdscr, row, 0, title, w, title_attr)
+    safe_add(stdscr, row, len(title), count_str, w, DIM)
+    safe_add(stdscr, row, w - len(now) - 1, now, w, DIM)
+    row += 1
+    safe_add(stdscr, row, 0, "━" * w, w, DIM)
+    row += 1
+
+    # ── Active Sessions ──
+    if active:
+        n_running = sum(1 for s in active if not s.get("lastWaitUserAt"))
+        n_waiting = len(active) - n_running
+        counts = []
+        if n_running:
+            counts.append(f"{n_running} running")
+        if n_waiting:
+            counts.append(f"{n_waiting} waiting")
+        safe_add(stdscr, row, 0, f" SESSIONS ({' · '.join(counts)})", w, CYAN)
+        row += 1
+        for s in active:
+            if row >= h - 2:
+                break
+            waiting = bool(s.get("lastWaitUserAt"))
+            dur = fmt_dur(s["created_at"])
+            sid = short_session(s.get("session_id", ""))
+            prompt = short_prompt(s.get("prompt"), max(10, w - 22))
+
+            if waiting:
+                # Waiting for user input — dim/yellow, pause icon
+                safe_add(stdscr, row, 1, "◦", w, YELLOW)
+                safe_add(stdscr, row, 3, f"{dur:>6}", w, DIM)
+                safe_add(stdscr, row, 10, sid, w, DIM)
+                safe_add(stdscr, row, 17, prompt, w, DIM)
+            else:
+                # Running — green spinner, color-code duration
+                dur_attr = GREEN
+                try:
+                    secs = (datetime.utcnow() - datetime.fromisoformat(s["created_at"])).total_seconds()
+                    if secs > 600:
+                        dur_attr = RED
+                    elif secs > 120:
+                        dur_attr = YELLOW
+                except Exception:
+                    pass
+                safe_add(stdscr, row, 1, sc, w, GREEN)
+                safe_add(stdscr, row, 3, f"{dur:>6}", w, dur_attr)
+                safe_add(stdscr, row, 10, sid, w, DIM)
+                safe_add(stdscr, row, 17, prompt, w, WHITE)
+            row += 1
+        row += 1
+
+    # ── Running Agents ──
+    if r_agents:
+        safe_add(stdscr, row, 0, f" AGENTS ({len(r_agents)})", w, MAGENTA)
+        row += 1
+        for a in r_agents:
+            if row >= h - 2:
+                break
+            dur = fmt_dur(a["started_at"])
+            atype = a["agent_type"]
+            safe_add(stdscr, row, 1, sc, w, MAGENTA)
+            safe_add(stdscr, row, 3, f"{dur:>6}", w, YELLOW)
+            safe_add(stdscr, row, 10, atype, w, MAGENTA)
+            safe_add(stdscr, row, 10 + len(atype) + 1, short_id(a["agent_id"]), w, DIM)
+            row += 1
+        row += 1
+
+    # Show idle state when nothing is active
+    if not active and not r_agents:
+        safe_add(stdscr, row, 0, " no active sessions or agents", w, DIM)
+        row += 2
+
+    # ── History ──
+    safe_add(stdscr, row, 0, "━" * w, w, DIM)
+    row += 1
+    safe_add(stdscr, row, 0, " HISTORY", w, CYAN)
+    row += 1
+
+    # Merge agents and prompts, sorted by time desc
+    history = []
+    for a in c_agents:
+        history.append(("agent", a["stopped_at"], a))
+    for s in recent:
+        history.append(("prompt", s["stoped_at"], s))
+    history.sort(key=lambda x: x[1] or "", reverse=True)
+
+    if not history:
+        safe_add(stdscr, row, 0, "   (empty)", w, DIM)
+        row += 1
+    else:
+        shown = 0
+        for kind, ts, item in history:
+            if row >= h - 1 or shown >= MAX_HISTORY:
+                break
+            t = fmt_time(ts)
+
+            if kind == "agent":
+                dur = fmt_dur(item["started_at"], item["stopped_at"])
+                atype = item.get("agent_type", "?")
+                safe_add(stdscr, row, 1, t, w, DIM)
+                safe_add(stdscr, row, 10, f"{dur:>6}", w, DIM)
+                safe_add(stdscr, row, 17, f"▸ {atype}", w, curses.color_pair(6))
+            else:
+                dur = fmt_dur(item["created_at"], item["stoped_at"])
+                prompt = short_prompt(item.get("prompt"), max(10, w - 19))
+                if not prompt:
+                    continue  # skip empty/system prompts
+                safe_add(stdscr, row, 1, t, w, DIM)
+                safe_add(stdscr, row, 10, f"{dur:>6}", w, DIM)
+                safe_add(stdscr, row, 17, prompt, w, DIM)
+            row += 1
+            shown += 1
+
+    # ── Footer ──
+    safe_add(stdscr, h - 1, 0, " q=quit │ 1s refresh", w, DIM)
+    stdscr.refresh()
+
+
+def main(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+    stdscr.timeout(1000)
+
+    frame = 0
+    while True:
+        draw(stdscr, frame)
+        frame += 1
+        ch = stdscr.getch()
+        if ch in (ord("q"), ord("Q"), 27):
+            break
+
+
+if __name__ == "__main__":
+    try:
+        curses.wrapper(main)
+    except KeyboardInterrupt:
+        pass
