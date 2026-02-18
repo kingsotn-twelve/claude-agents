@@ -2,27 +2,7 @@
 
 Live terminal dashboard for monitoring Claude Code sessions and agents.
 
-```
- ⠹ CLAUDE AGENTS  2 sessions · 3 agents     23:15:42
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- SESSIONS (2 running · 1 waiting)
- ⠹   1m23s 15b04e implement dark mode for settings page
- ⠹     14s a3f82b fix auth token refresh bug
- ◦   5m02s 9c1d3a (waiting for input)
-
- AGENTS (3)
- ⠹   1m05s Explore  a3f82bc
- ⠹     32s Plan     b9d1e34
- ⠹      8s Bash     c7a2f90
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- HISTORY
- 23:14:21    12s ▸ Explore
- 23:14:05  2m31s fix the login redirect loop
- 23:11:22     6s ▸ Bash
- 23:10:50  1m42s add retry logic to webhook handler
-
- q=quit │ 1s refresh
-```
+![Uploading image.png…]()
 
 ## Setup
 
