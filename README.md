@@ -55,6 +55,16 @@ Add to `~/.claude/settings.json`:
 
 Open in a split pane alongside your Claude Code session. Press `q` to quit.
 
+## Test it
+
+Open the dashboard in one pane, then ask Claude to spin up background agents in another:
+
+```
+spin up 5 background agents that sleep for random durations between 5-20 seconds
+```
+
+Claude will launch Task agents that show up in the AGENTS section with live elapsed timers. As each finishes, it moves to HISTORY. This is the quickest way to verify hooks are wired correctly and the dashboard is rendering.
+
 ## How it works
 
 - **ccnotify.py** — Claude Code hook handler that logs session and agent lifecycle events to a SQLite database
