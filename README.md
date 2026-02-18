@@ -2,7 +2,8 @@
 
 Live terminal dashboard for monitoring Claude Code sessions and agents.
 
-![Uploading image.png…]()
+<img width="2168" height="1397" alt="image" src="https://github.com/user-attachments/assets/add57110-5737-4477-b8b0-2439931924eb" />
+
 
 ## Setup
 
