@@ -177,6 +177,7 @@ def draw(stdscr, frame: int):
 
     spins = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
     sc = spins[frame % len(spins)]
+    pulse = ("○", "◎", "●", "◎")[frame % 4]
 
     data = query_db(DB_PATH)
     active = data["active_sessions"]
@@ -266,7 +267,7 @@ def draw(stdscr, frame: int):
                         dur_attr = YELLOW
                 except Exception:
                     pass
-                safe_add(stdscr, row, 1, "●", w, GREEN)
+                safe_add(stdscr, row, 1, pulse, w, GREEN)
                 safe_add(stdscr, row, 3, f"{run_dur:>6}", w, dur_attr)
                 safe_add(stdscr, row, 10, sid_short, w, DIM)
                 safe_add(stdscr, row, 17, prompt, w, WHITE)
