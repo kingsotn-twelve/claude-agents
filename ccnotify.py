@@ -246,6 +246,10 @@ class ClaudePromptTracker:
         session_id = data.get("session_id")
         prompt = data.get("prompt", "")
         cwd = data.get("cwd", "")
+        # Skip system messages (task-notifications, system-reminders, etc.)
+        if prompt.strip().startswith("<"):
+            logging.info(f"Skipped system prompt session={session_id}")
+            return
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO prompt (session_id, prompt, cwd) VALUES (?, ?, ?)",
@@ -396,7 +400,14 @@ def main():
         tracker.handle_subagent_start(data)
     elif event == "SubagentStop":
         tracker.handle_subagent_stop(data)
-        tracker.handle_stop(data, is_subagent=True)
+        # Send notification but do NOT call handle_stop — that would
+        # prematurely close the parent session's prompt row.
+        agent_type = data.get("agent_type", "unknown")
+        cwd = data.get("cwd", "")
+        iterm = iterm_info()
+        title = iterm["window"] or os.path.basename(cwd)
+        loc = _location_label(iterm)
+        send_notification(title, f"Agent done: {agent_type}", loc, "subagent_complete", cwd)
     elif event == "Notification":
         tracker.handle_notification(data)
 

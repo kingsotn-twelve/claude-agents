@@ -191,8 +191,11 @@ def draw(stdscr, frame: int):
     row += 1
 
     # ── Active Sessions ──
+    # Build set of session_ids that have running agents
+    sessions_with_agents = {a["session_id"] for a in r_agents}
+
     if active:
-        n_running = sum(1 for s in active if not s.get("lastWaitUserAt"))
+        n_running = sum(1 for s in active if not s.get("lastWaitUserAt") or s["session_id"] in sessions_with_agents)
         n_waiting = len(active) - n_running
         counts = []
         if n_running:
@@ -204,7 +207,8 @@ def draw(stdscr, frame: int):
         for s in active:
             if row >= h - 2:
                 break
-            waiting = bool(s.get("lastWaitUserAt"))
+            has_agents = s["session_id"] in sessions_with_agents
+            waiting = bool(s.get("lastWaitUserAt")) and not has_agents
             dur = fmt_dur(s["created_at"])
             sid = short_session(s.get("session_id", ""))
             prompt = short_prompt(s.get("prompt"), max(10, w - 22))
