@@ -177,6 +177,7 @@ def draw(stdscr, frame: int):
 
     spins = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
     sc = spins[frame % len(spins)]
+    pulse = ("○", "◎", "●", "◎")[frame % 4]
 
     data = query_db(DB_PATH)
     active = data["active_sessions"]
@@ -245,16 +246,18 @@ def draw(stdscr, frame: int):
             child_agents = agents_by_session.get(sid, [])
             has_agents = len(child_agents) > 0
             waiting = bool(s.get("lastWaitUserAt")) and not has_agents
-            dur = fmt_dur(s["created_at"])
             sid_short = short_session(sid)
             prompt = short_prompt(s.get("prompt"), max(10, w - 22))
 
             if waiting:
-                safe_add(stdscr, row, 1, "\u25e6", w, YELLOW)
-                safe_add(stdscr, row, 3, f"{dur:>6}", w, DIM)
+                # Show how long it's been waiting for input, not total session time
+                wait_dur = fmt_dur(s["lastWaitUserAt"])
+                safe_add(stdscr, row, 1, "○", w, YELLOW)
+                safe_add(stdscr, row, 3, f"~{wait_dur:>5}", w, DIM)
                 safe_add(stdscr, row, 10, sid_short, w, DIM)
                 safe_add(stdscr, row, 17, prompt, w, DIM)
             else:
+                run_dur = fmt_dur(s["created_at"])
                 dur_attr = GREEN
                 try:
                     secs = (datetime.utcnow() - datetime.fromisoformat(s["created_at"])).total_seconds()
@@ -264,8 +267,8 @@ def draw(stdscr, frame: int):
                         dur_attr = YELLOW
                 except Exception:
                     pass
-                safe_add(stdscr, row, 1, sc, w, GREEN)
-                safe_add(stdscr, row, 3, f"{dur:>6}", w, dur_attr)
+                safe_add(stdscr, row, 1, pulse, w, GREEN)
+                safe_add(stdscr, row, 3, f"{run_dur:>6}", w, dur_attr)
                 safe_add(stdscr, row, 10, sid_short, w, DIM)
                 safe_add(stdscr, row, 17, prompt, w, WHITE)
             row += 1
