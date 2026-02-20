@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -588,15 +588,18 @@ def draw(stdscr, frame: int, state: dict):
             safe_add(stdscr, pr, rs, " AGENTS  7d", w, CYAN)
             pr += 1
             max_a = top_agents[0]["cnt"] if top_agents else 1
+            tag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_agents), default=0)
+            type_w = max((len(e["agent_type"] or "?") for e in top_agents), default=0)
             for entry in top_agents:
                 if pr >= h - 1:
                     break
                 tag = dir_tag(entry.get("cwd", ""))
                 atype = entry["agent_type"] or "?"
-                label = f"{tag} {atype}" if tag else atype
                 cnt = entry["cnt"]
                 bar = _bar(cnt, max_a)
-                safe_add(stdscr, pr, rs, f" {label:<20} {bar} {cnt}", w, DIM)
+                col1 = tag.ljust(tag_w)
+                col2 = atype.ljust(type_w)
+                safe_add(stdscr, pr, rs, f" {col1}  {col2}  {bar} {cnt}", w, DIM)
                 pr += 1
 
             pr += 1

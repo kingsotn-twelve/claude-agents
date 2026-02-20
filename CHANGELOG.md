@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.2 — Feb 19, 2026
+
+### Aligned columns in agents stats panel
+The `[dir]` and `AgentType` columns in the AGENTS stats panel are now dynamically aligned — widths are computed from the current data so all rows line up cleanly regardless of path or type name length.
+
+---
+
 ## v0.2.1 — Feb 19, 2026
 
 ### Dir prefix in stats panel
