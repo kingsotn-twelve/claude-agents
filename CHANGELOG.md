@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.1 — Feb 19, 2026
+
+### Fixed: Unknown Agent Pollution
+The stats panel was showing `unknown ████████ 151` — agents fired by Claude Code without an `agent_type` in the hook payload were being stored as `"unknown"` and counted in usage stats. These are now silently ignored, and the 151 stale records have been cleaned from the database.
+
+---
+
 ## v0.1.0 — Feb 19, 2026
 
 ### Usage Stats Panel
