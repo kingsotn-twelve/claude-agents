@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.0 — Feb 19, 2026
+
+### Install script
+
+A new `install.sh` puts everything in the right place so `claude-agents` works from any directory — no more `./claude-agents` from the repo. It copies `ccnotify.py` to `~/.claude/ccnotify/` and the binary to `~/.local/bin/`, then prints the exact hook config to paste into `~/.claude/settings.json`.
+
+```bash
+git clone https://github.com/kingsotn-twelve/claude-agents
+cd claude-agents
+./install.sh
+```
+
+### Test script
+
+`test-agents.sh` spins up fake agents directly in the database so you can verify the dashboard without a live Claude session. Pass optional args to control count and sleep range.
+
+```bash
+./test-agents.sh          # 5 agents, 5–20s
+./test-agents.sh 3 2 8    # 3 agents, 2–8s
+```
+
+### `CLAUDE_AGENTS_DB` env var
+
+Both `claude-agents` and `test-agents.sh` now respect a `CLAUDE_AGENTS_DB` environment variable for pointing at a non-default database location, useful if your `ccnotify.py` is installed somewhere other than `~/.claude/ccnotify/`.
+
+---
+
 ## v0.2.3 — Feb 19, 2026
 
 ### Dir prefix on tools stats

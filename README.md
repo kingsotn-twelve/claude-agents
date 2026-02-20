@@ -7,70 +7,49 @@ Live terminal dashboard for monitoring Claude Code sessions and agents.
 
 ## Setup
 
-### 1. Install hooks
+```bash
+git clone https://github.com/kingsotn-twelve/claude-agents
+cd claude-agents
+./install.sh
+```
 
-Add to `~/.claude/settings.json`:
+`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `claude-agents` to `~/.local/bin/` so it's on your PATH. It also prints the exact hook config to paste into `~/.claude/settings.json`.
+
+### Manual hook config
+
+After running `install.sh`, add the printed block to `~/.claude/settings.json`. It looks like:
 
 ```json
 {
   "hooks": {
-    "SubagentStart": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py SubagentStart"}]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py SubagentStop"}]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py UserPromptSubmit"}]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py Stop"}]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py Notification"}]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "path/to/ccnotify.py PreToolUse"}]
-      }
-    ]
+    "SubagentStart":    [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py SubagentStart"}]}],
+    "SubagentStop":     [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py SubagentStop"}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py UserPromptSubmit"}]}],
+    "Stop":             [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py Stop"}]}],
+    "Notification":     [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py Notification"}]}],
+    "PreToolUse":       [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py PreToolUse"}]}]
   }
 }
 ```
 
-### 2. Run the dashboard
+### Run the dashboard
 
 ```bash
-./claude-agents
+claude-agents
 ```
 
 Open in a split pane alongside your Claude Code session. Press `q` to quit.
 
 ## Test it
 
-Open the dashboard in one pane, then ask Claude to spin up background agents in another:
+Run the included test script to verify the dashboard without needing a live Claude session:
 
-```
-spin up 5 background agents that sleep for random durations between 5-20 seconds
+```bash
+./test-agents.sh          # 5 agents, 5–20s
+./test-agents.sh 3 2 8    # 3 agents, 2–8s
 ```
 
-Claude will launch Task agents that show up nested under their parent session with live elapsed timers. As each finishes, it moves to HISTORY. This is the quickest way to verify hooks are wired correctly and the dashboard is rendering.
+Agents appear nested under a test session with live elapsed timers. As each finishes it moves to HISTORY.
 
 ## How it works
 

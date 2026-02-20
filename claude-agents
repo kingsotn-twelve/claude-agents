@@ -16,11 +16,11 @@ import sys
 import time
 from datetime import datetime
 
-VERSION = "0.2.3"
+VERSION = "0.3.0"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
-DB_PATH = os.path.expanduser("~/.claude/ccnotify/ccnotify.db")
+DB_PATH = os.environ.get("CLAUDE_AGENTS_DB") or os.path.expanduser("~/.claude/ccnotify/ccnotify.db")
 
 MAX_COMPLETED_AGENTS = 10
 MAX_HISTORY = 20
