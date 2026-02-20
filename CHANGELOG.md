@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.4.0 — Feb 20, 2026
+
+### Agent Teams
+
+The dashboard now understands the difference between subagents (spawned via `Task` inside a session) and agent team teammates (separate, independent Claude Code sessions coordinated as a team). Previously, team members appeared as anonymous solo sessions with no grouping and no visibility into the shared task list.
+
+A new **TEAMS** section sits above SESSIONS and groups active teammates under their team name, showing live task counts at a glance — `1✓ 2● 2○` for completed, in-progress, and pending. Team members are excluded from the solo SESSIONS list to avoid double-display. Navigate with `j/k` to select any teammate, and the right panel switches from transcript preview to the team's full task list, sorted running-first.
+
+```
+ TEAMS (test-team · 5 tasks  1✓ 2● 2○)
+ ├─ ◉  3m  b095b7  researcher
+ ├─ ◉  3m  db6550  implementer
+ └─ ◉  3m  1f2a1a  reviewer
+```
+
+Team membership is resolved by reading `~/.claude/teams/{name}/config.json` and task files from `~/.claude/tasks/{name}/` on every refresh. A new `team_session` DB table is populated by the new `TeammateIdle` hook as a fallback for teammates not yet in the config files. Desktop notifications fire on `TeammateIdle` ("Idle: researcher") and `TaskCompleted` ("✓ Implement auth endpoints").
+
+To test without running a real team, use the new `test-teams.sh` script — it writes fake team config and task files, inserts sessions into the DB, and simulates a task completing mid-run.
+
+```bash
+./test-teams.sh          # 20s run
+./test-teams.sh 60       # 60s run
+```
+
+---
+
 ## v0.3.1 — Feb 20, 2026
 
 ### Smarter session staleness
