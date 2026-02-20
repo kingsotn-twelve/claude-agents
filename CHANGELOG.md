@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.1 — Feb 20, 2026
+
+### Esc to deselect
+
+Pressing `Esc` while an agent or teammate is selected now clears the selection and returns the right panel to the stats view. Previously the only way back was to quit and reopen. `q`/`Q` still quits; `Esc` no longer does.
+
+---
+
 ## v0.4.0 — Feb 20, 2026
 
 ### Agent Teams
