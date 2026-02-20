@@ -44,8 +44,12 @@ def query_db(db_path: str) -> dict:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
 
-        # Active sessions: latest prompt per session, last 2 hours, no stale orphans
-        # Include lastWaitUserAt to distinguish running vs waiting
+        # Active sessions: latest prompt per session.
+        # A session is "active" if un-stopped AND one of:
+        #   - created within the last 5 min (grace period before first tool call)
+        #   - waiting for user input within the last 30 min (time-bounded to avoid forever-stuck sessions)
+        #   - had tool activity in the last 10 min (actively running)
+        # This correctly hides sessions killed without Stop firing.
         for row in conn.execute(
             """SELECT p.session_id, p.prompt, p.cwd, p.created_at, p.seq, p.lastWaitUserAt
                FROM prompt p
@@ -53,7 +57,14 @@ def query_db(db_path: str) -> dict:
                    SELECT session_id, MAX(id) as max_id
                    FROM prompt
                    WHERE stoped_at IS NULL
-                     AND created_at > datetime('now', '-2 hours')
+                     AND (
+                       created_at > datetime('now', '-5 minutes')
+                       OR (lastWaitUserAt IS NOT NULL AND lastWaitUserAt > datetime('now', '-30 minutes'))
+                       OR session_id IN (
+                         SELECT DISTINCT session_id FROM tool_event
+                         WHERE created_at > datetime('now', '-10 minutes')
+                       )
+                     )
                    GROUP BY session_id
                ) latest ON p.id = latest.max_id
                ORDER BY p.created_at DESC

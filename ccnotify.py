@@ -342,9 +342,11 @@ class ClaudePromptTracker:
 
             if row:
                 record_id = row[0]
+                # Clear ALL un-stopped rows for this session, not just the latest.
+                # Previous Stop failures can leave multiple stale rows; clean them all.
                 conn.execute(
-                    "UPDATE prompt SET stoped_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (record_id,),
+                    "UPDATE prompt SET stoped_at = CURRENT_TIMESTAMP WHERE session_id = ? AND stoped_at IS NULL",
+                    (session_id,),
                 )
                 conn.commit()
                 seq = conn.execute(
