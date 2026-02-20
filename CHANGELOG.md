@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.1 — Feb 19, 2026
+
+### Dir prefix in stats panel
+The AGENTS stats panel on the right now shows `[dirname] AgentType` per row, grouped by both directory and agent type — so `[.claude] Explore` and `[rodeo] Explore` appear as separate entries. No more truncation on agent type names.
+
+### Dir prefix in transcript preview header
+The selected agent header now reads `aid · [dirname] AgentType · dur`.
+
+---
+
 ## v0.2.0 — Feb 19, 2026
 
 ### Directory prefix on agents

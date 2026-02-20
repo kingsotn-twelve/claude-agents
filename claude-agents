@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -112,9 +112,9 @@ def query_db(db_path: str) -> dict:
         try:
             data["top_agents"] = [
                 dict(r) for r in conn.execute(
-                    """SELECT agent_type, COUNT(*) as cnt FROM agent
+                    """SELECT agent_type, cwd, COUNT(*) as cnt FROM agent
                        WHERE started_at > datetime('now', '-7 days') AND agent_type != ''
-                       GROUP BY agent_type ORDER BY cnt DESC LIMIT 8"""
+                       GROUP BY agent_type, cwd ORDER BY cnt DESC LIMIT 12"""
                 )
             ]
         except sqlite3.OperationalError:
@@ -142,7 +142,7 @@ def dir_tag(cwd: str) -> str:
     if not cwd:
         return ""
     name = os.path.basename(cwd.rstrip("/")) or os.path.basename(os.path.dirname(cwd))
-    return f"[{name[:10]}]" if name else ""
+    return f"[{name}]" if name else ""
 
 
 def find_transcript(agent_id: str) -> str:
@@ -568,7 +568,9 @@ def draw(stdscr, frame: int, state: dict):
             dur = fmt_dur(sel_agent["started_at"])
             atype = sel_agent.get("agent_type") or "agent"
             aid = sel_agent["agent_id"][:7]
-            safe_add(stdscr, pr, rs, f" {aid} · {atype} · {dur}"[:rw], w, MAGENTA | curses.A_BOLD)
+            tag = dir_tag(sel_agent.get("cwd", ""))
+            header = f" {aid} · {tag} {atype} · {dur}" if tag else f" {aid} · {atype} · {dur}"
+            safe_add(stdscr, pr, rs, header[:rw], w, MAGENTA | curses.A_BOLD)
             pr += 1
             safe_add(stdscr, pr, rs, "─" * (rw - 1), w, DIM)
             pr += 1
@@ -589,10 +591,12 @@ def draw(stdscr, frame: int, state: dict):
             for entry in top_agents:
                 if pr >= h - 1:
                     break
-                atype = (entry["agent_type"] or "?")[:10]
+                tag = dir_tag(entry.get("cwd", ""))
+                atype = entry["agent_type"] or "?"
+                label = f"{tag} {atype}" if tag else atype
                 cnt = entry["cnt"]
                 bar = _bar(cnt, max_a)
-                safe_add(stdscr, pr, rs, f" {atype:<10} {bar} {cnt}", w, DIM)
+                safe_add(stdscr, pr, rs, f" {label:<20} {bar} {cnt}", w, DIM)
                 pr += 1
 
             pr += 1
