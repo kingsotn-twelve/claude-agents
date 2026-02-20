@@ -850,7 +850,7 @@ def draw(stdscr, frame: int, state: dict):
 
     # -- Footer (full width) --
     if visible_agents:
-        safe_add(stdscr, h - 1, 0, " j/k=select  q=quit", w, DIM)
+        safe_add(stdscr, h - 1, 0, " j/k=select  esc=deselect  q=quit", w, DIM)
     else:
         safe_add(stdscr, h - 1, 0, " q=quit │ 1s refresh", w, DIM)
     stdscr.refresh()
@@ -868,8 +868,10 @@ def main(stdscr):
         draw(stdscr, frame, state)
         frame += 1
         ch = stdscr.getch()
-        if ch in (ord("q"), ord("Q"), 27):
+        if ch in (ord("q"), ord("Q")):
             break
+        elif ch == 27:  # Esc — deselect (back to stats view)
+            state["selected"] = -1
         elif ch in (ord("j"), curses.KEY_DOWN):
             agents = state["visible_agents"]
             if agents:
