@@ -12,7 +12,7 @@ import random
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -476,8 +476,8 @@ class ClaudePromptTracker:
         if not row or not row[1]:
             return ""
         try:
-            start = datetime.fromisoformat(row[0])
-            end = datetime.fromisoformat(row[1])
+            start = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+            end = datetime.fromisoformat(row[1]).replace(tzinfo=timezone.utc)
             secs = int((end - start).total_seconds())
             if secs < 60:
                 return f"{secs}s"

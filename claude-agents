@@ -338,8 +338,8 @@ end tell"""
 
 def fmt_dur(start_str: str, end_str: str | None = None) -> str:
     try:
-        start = datetime.fromisoformat(start_str)
-        end = datetime.fromisoformat(end_str) if end_str else datetime.now(timezone.utc)
+        start = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
+        end = datetime.fromisoformat(end_str).replace(tzinfo=timezone.utc) if end_str else datetime.now(timezone.utc)
         secs = max(0, int((end - start).total_seconds()))
         if secs < 60:
             return f"{secs}s"
