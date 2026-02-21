@@ -518,21 +518,18 @@ def life_init(rows, cols, density=0.3):
 
 
 def life_step(grid, rows, cols):
-    """One generation of Conway's Game of Life (toroidal)."""
+    """One generation of Conway's Game of Life (toroidal, optimized)."""
     new = [[False] * cols for _ in range(rows)]
     for r in range(rows):
+        rm = (r - 1) % rows
+        rp = (r + 1) % rows
+        row_m, row_0, row_p = grid[rm], grid[r], grid[rp]
         for c in range(cols):
-            n = 0
-            for dr in (-1, 0, 1):
-                for dc in (-1, 0, 1):
-                    if dr == 0 and dc == 0:
-                        continue
-                    if grid[(r + dr) % rows][(c + dc) % cols]:
-                        n += 1
-            if grid[r][c]:
-                new[r][c] = n in (2, 3)
-            else:
-                new[r][c] = n == 3
+            cm = (c - 1) % cols
+            cp = (c + 1) % cols
+            n = row_m[cm] + row_m[c] + row_m[cp] + row_0[cm] + row_0[cp] + row_p[cm] + row_p[c] + row_p[cp]
+            if n == 3 or (n == 2 and row_0[c]):
+                new[r][c] = True
     return new
 
 
@@ -1380,11 +1377,11 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     }
                     random.seed()
                 lg = life_grids[life_sid]
-                if frame % 1 == 0:
+                for _ in range(5):  # 5 steps per frame = ~50 gen/s
                     lg["grid"] = life_step(lg["grid"], grid_rows, grid_cols)
                     lg["gen"] += 1
-                    alive = sum(sum(row) for row in lg["grid"])
-                    if alive < 5:
+                alive = sum(sum(row) for row in lg["grid"])
+                if alive < 5:
                         sess_info = session_lookup.get(life_sid, {})
                         seed_str = (sess_info.get("prompt", "") or "") + life_sid + str(lg["gen"])
                         random.seed(hash(seed_str))
