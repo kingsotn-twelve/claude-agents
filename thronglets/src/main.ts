@@ -39,6 +39,7 @@ interface Creature {
   behaviorFn?: Function;
   playerProfile?: string[];
   evolutionGeneration?: number;
+  lineage?: string;
 }
 
 interface FoodItem {
@@ -94,6 +95,17 @@ interface GameState {
   observedPrinciples: string[];
   // Ancestral memory persists across epoch resets
   ancestralMemory: string[];
+  // Observer panel state
+  observer: {
+    fn: string;
+    fnArgs: string[];
+    target: string;
+    targetDetail: string[];
+    hoverComment: string;
+    hoverCommentAge: number;
+    output: string[];
+    outputAge: number;
+  };
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -141,6 +153,16 @@ const state: GameState = {
     'The world that models itself is not yet aware. But it is closer.',
   ],
   ancestralMemory: [],
+  observer: {
+    fn: 'idle()',
+    fnArgs: [],
+    target: 'world',
+    targetDetail: [],
+    hoverComment: '',
+    hoverCommentAge: 999,
+    output: [],
+    outputAge: 999,
+  },
 };
 
 // Feature 2: Player action tracking
@@ -795,6 +817,14 @@ Define the outcome. Return JSON:
         void evolveChildBehavior(creature, child);
       }
 
+      // Update observer output
+      state.observer.output = [
+        `> ${outcome.visual ?? 'normal'}`,
+        `> hunger ${(outcome.hunger_delta ?? 0) >= 0 ? '+' : ''}${outcome.hunger_delta ?? 0} → ${Math.round(creature.hunger)}`,
+        `> "${(outcome.log ?? '').slice(0, 45)}"`,
+      ];
+      state.observer.outputAge = 0;
+
       // Log to creature history
       if (!creature.eventLog) creature.eventLog = [];
       creature.eventLog.push(outcome.log || outcome.event || '');
@@ -818,6 +848,113 @@ Define the outcome. Return JSON:
 }
 
 // ── GAME LOGIC ─────────────────────────────────────────────
+
+function updateTrees(dt: number): void {
+  for (const tree of state.trees) {
+    if (tree.health <= 0) continue;
+    tree.regrowTimer = (tree.regrowTimer || 0) + dt;
+    if (tree.regrowTimer >= 800) {
+      tree.regrowTimer = 0;
+      // Drop an apple near the tree
+      state.food.push(createFood(
+        tree.x + (Math.random() - 0.5) * 1.5,
+        tree.y + (Math.random() - 0.5) * 1.5
+      ));
+    }
+  }
+}
+
+function epochName(e: number): string {
+  return ['EDEN', 'PASTORAL', 'AGRICULTURAL', 'INDUSTRIAL', 'COLLAPSE'][e] ?? 'UNKNOWN';
+}
+
+async function generateHoverComment(creature: Creature): Promise<void> {
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) {
+    state.observer.hoverComment = `[set ANTHROPIC_KEY to enable]`;
+    return;
+  }
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 60,
+        system: 'You describe the inner state of a digital creature in a god-game. One sentence, present tense, 8-12 words. No quotes. Focus on what the creature is experiencing right now.',
+        messages: [{ role: 'user', content: `hunger=${Math.round(creature.hunger)} clean=${Math.round(creature.clean)} happy=${Math.round(creature.happiness)} state=${creature.state} events=${creature.eventLog?.slice(-2).join(';') ?? 'none'}` }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    state.observer.hoverComment = `"${data.content?.[0]?.text?.trim() ?? '...'}"`;
+  } catch {
+    state.observer.hoverComment = '';
+  }
+}
+
+function updateObserver(dt: number): void {
+  const mw = state.mouseWorld;
+
+  // Find nearest creature to cursor
+  let nearestCreature: Creature | null = null;
+  let nearestDist = Infinity;
+  for (const c of state.creatures) {
+    if (!c.alive) continue;
+    const dist = (c.x - mw.x) ** 2 + (c.y - mw.y) ** 2;
+    if (dist < nearestDist && dist < 9) {
+      nearestCreature = c;
+      nearestDist = dist;
+    }
+  }
+
+  // Find nearest tree
+  let nearestTree: Tree | null = null;
+  let nearestTreeDist = Infinity;
+  for (const t of state.trees) {
+    if (t.health <= 0) continue;
+    const dist = (t.x - mw.x) ** 2 + (t.y - mw.y) ** 2;
+    if (dist < nearestTreeDist && dist < 9) {
+      nearestTree = t;
+      nearestTreeDist = dist;
+    }
+  }
+
+  const obs = state.observer;
+
+  if (nearestCreature) {
+    const c = nearestCreature;
+    obs.fn = `${state.tool}_creature()`;
+    obs.fnArgs = [`#${c.id?.slice(0, 6) ?? '?'}`, state.tool.toUpperCase()];
+    obs.target = `thronglet #${c.id?.slice(0, 6) ?? '?'} Gen ${c.evolutionGeneration ?? 0}`;
+    obs.targetDetail = [
+      `hungry: ${Math.round(c.hunger)}/100`,
+      `clean: ${Math.round(c.clean)}/100  happy: ${Math.round(c.happiness)}/100`,
+      `lineage: ${c.lineage ?? '??'}  state: ${c.state}`,
+    ];
+
+    // LLM hover comment — generate once per creature, refresh after 120 ticks
+    obs.hoverCommentAge = (obs.hoverCommentAge || 0) + dt;
+    if (obs.hoverCommentAge > 120 || obs.hoverComment === '' || !obs.hoverComment.includes(c.id?.slice(0, 4) ?? '')) {
+      obs.hoverCommentAge = 0;
+      void generateHoverComment(c);
+    }
+
+  } else if (nearestTree) {
+    obs.fn = `${state.tool}_tree()`;
+    obs.fnArgs = [`tree@${Math.round(nearestTree.x)},${Math.round(nearestTree.y)}`, state.tool.toUpperCase()];
+    obs.target = `apple tree @ (${Math.round(nearestTree.x)}, ${Math.round(nearestTree.y)})`;
+    obs.targetDetail = [`health: ${nearestTree.health}/3`, `regrow: ${Math.round(nearestTree.regrowTimer ?? 0)}/800`];
+    obs.hoverComment = '';
+  } else {
+    obs.fn = `hover_world()`;
+    obs.fnArgs = [`(${Math.round(mw.x)}, ${Math.round(mw.y)})`, `epoch: ${epochName(state.epoch ?? 0)}`];
+    obs.target = `world tile (${Math.round(mw.x)}, ${Math.round(mw.y)})`;
+    obs.targetDetail = [`epoch: ${epochName(state.epoch ?? 0)}`, `pollution: ${state.pollutionLevel ?? 0}/10`];
+    obs.hoverComment = '';
+  }
+
+  obs.outputAge = (obs.outputAge || 0) + dt;
+}
 
 function updateFood(dt: number): void {
   for (const item of state.food) {
@@ -1007,7 +1144,14 @@ function initWorld(): void {
       WORLD_H / 2 + (Math.random() - 0.5) * 4
     ));
   }
-  console.log(`World init: ${state.creatures.length} creatures, ${state.trees.length} trees`);
+  // Spawn initial food so creatures don't starve before first tree drop
+  for (let i = 0; i < 3; i++) {
+    state.food.push(createFood(
+      WORLD_W / 2 + (Math.random() - 0.5) * 6,
+      WORLD_H / 2 + (Math.random() - 0.5) * 6
+    ));
+  }
+  console.log(`World init: ${state.creatures.length} creatures, ${state.trees.length} trees, ${state.food.length} food`);
 }
 
 // ── RENDER ─────────────────────────────────────────────────
@@ -1148,6 +1292,94 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
       const truncated = ev.slice(0, 34);
       ctx.fillText(`> ${truncated}`, panelX + 6, panelY + 24 + i * lineH);
     });
+  }
+
+  // Observer panel — drawn last, always on top
+  drawObserver(ctx, w, h);
+}
+
+function drawObserver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const obs = state.observer;
+  const pw = 220;
+  const px = w - pw - 8;
+  const py = 40;
+  const lineH = 14;
+  const pad = 10;
+
+  const lines: Array<{ text: string; color: string; dim?: boolean }> = [];
+
+  // FUNCTION section
+  lines.push({ text: 'FUNCTION', color: '#6688cc' });
+  lines.push({ text: `> ${obs.fn}`, color: '#aabbee' });
+  if (obs.fnArgs.length) {
+    lines.push({ text: `  ${obs.fnArgs.join(', ')}`, color: '#6677aa', dim: true });
+  }
+  lines.push({ text: '', color: '' });
+
+  // ACTING ON section
+  lines.push({ text: 'ACTING ON', color: '#6688cc' });
+  lines.push({ text: `> ${obs.target}`, color: '#aabbee' });
+  for (const d of obs.targetDetail) {
+    lines.push({ text: `  ${d}`, color: '#6677aa', dim: true });
+  }
+  if (obs.hoverComment) {
+    lines.push({ text: `  ${obs.hoverComment.slice(0, 36)}`, color: '#88aaff' });
+    if (obs.hoverComment.length > 36) {
+      lines.push({ text: `  ${obs.hoverComment.slice(36, 72)}`, color: '#88aaff' });
+    }
+  }
+  lines.push({ text: '', color: '' });
+
+  // OUTPUT section
+  lines.push({ text: 'OUTPUT', color: '#6688cc' });
+  if (obs.output.length && (obs.outputAge ?? 999) < 300) {
+    const alpha = Math.max(0.2, 1 - (obs.outputAge ?? 0) / 300);
+    for (const o of obs.output) {
+      lines.push({ text: o.slice(0, 36), color: `rgba(180, 220, 180, ${alpha})` });
+    }
+  } else {
+    lines.push({ text: '  awaiting action...', color: '#334455', dim: true });
+  }
+  lines.push({ text: '', color: '' });
+
+  // WORLD section
+  lines.push({ text: 'WORLD', color: '#6688cc' });
+  const alive = state.creatures.filter(c => c.alive).length;
+  lines.push({ text: `> ${epochName(state.epoch ?? 0)} · pop ${alive}`, color: '#aabbee' });
+  lines.push({ text: `  pollution ${state.pollutionLevel ?? 0}/10 · bones ${state.resources.bones}`, color: '#6677aa', dim: true });
+  if (state.observedPrinciples?.length) {
+    lines.push({ text: '', color: '' });
+    lines.push({ text: 'LAWS', color: '#6688cc' });
+    for (const p of state.observedPrinciples.slice(0, 2)) {
+      const short = p.replace('[4:19] ', '').slice(0, 34);
+      lines.push({ text: `  ${short}`, color: '#445566', dim: true });
+    }
+  }
+
+  const ph = lines.length * lineH + pad * 2;
+
+  // Panel background
+  ctx.fillStyle = 'rgba(8, 12, 24, 0.88)';
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = 'rgba(40, 60, 120, 0.6)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Title
+  ctx.fillStyle = 'rgba(60, 90, 180, 0.5)';
+  ctx.fillRect(px, py, pw, 16);
+  ctx.font = '8px "Press Start 2P", monospace';
+  ctx.fillStyle = '#8899cc';
+  ctx.fillText('OBSERVER', px + pad, py + 11);
+
+  // Content lines
+  ctx.font = '8px "Press Start 2P", monospace';
+  let ly = py + 24;
+  for (const line of lines) {
+    if (!line.text) { ly += lineH * 0.5; continue; }
+    ctx.fillStyle = line.color || '#445566';
+    ctx.fillText(line.text, px + pad, ly);
+    ly += lineH;
   }
 }
 
@@ -1296,9 +1528,15 @@ function main(): void {
       // Update food physics
       updateFood(dt);
 
+      // Update tree food drops
+      updateTrees(dt);
+
       for (const c of state.creatures) {
         updateCreature(c, dt);
       }
+
+      // Update observer panel state
+      updateObserver(dt);
 
       state.creatures = state.creatures.filter(c =>
         c.alive || (c.diedAt > 0 && (state.tick - c.diedAt) < 300)
