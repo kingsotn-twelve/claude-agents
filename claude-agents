@@ -10,6 +10,7 @@ import curses
 import glob
 import random
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -86,11 +87,14 @@ def friendly_tool(name: str, label: str = "") -> str:
 # Selection highlight variants (white-on-dark-gray)
 SEL = SEL_DIM = SEL_CYAN = SEL_YELLOW = SEL_GREEN = SEL_MAGENTA = 0
 BG_SEL = 236  # dark gray background
+BORDER_DIM = 0
+BORDER_BRIGHT = 0
 
 
 def init_colors():
     global GREEN, CYAN, YELLOW, DIM, MAGENTA, WHITE, RED
     global SEL, SEL_DIM, SEL_CYAN, SEL_YELLOW, SEL_GREEN, SEL_MAGENTA, BG_SEL
+    global BORDER_DIM, BORDER_BRIGHT
     curses.start_color()
     curses.use_default_colors()
     # Normal colors (pair 1-7)
@@ -126,6 +130,15 @@ def init_colors():
         SEL_YELLOW = curses.A_REVERSE | curses.A_BOLD
         SEL_GREEN = curses.A_REVERSE | curses.A_BOLD
         SEL_MAGENTA = curses.A_REVERSE | curses.A_BOLD
+    # Breathing border colors (pair 21-22: two brightness levels)
+    try:
+        curses.init_pair(21, 240, -1)  # dim border (exhale)
+        curses.init_pair(22, 245, -1)  # bright border (inhale)
+        BORDER_DIM = curses.color_pair(21)
+        BORDER_BRIGHT = curses.color_pair(22)
+    except curses.error:
+        BORDER_DIM = DIM
+        BORDER_BRIGHT = DIM
 
 
 # ── DATA QUERIES ─────────────────────────────────────────────
@@ -633,6 +646,54 @@ def sparkline(buckets, width=10):
         return BRAILLE[0] * width
     norm = [min(4, int(v / mx * 4.99)) if v > 0 else 0 for v in vals]
     return "".join(BRAILLE[norm[i] * 5 + norm[i + 1]] for i in range(0, n, 2))
+
+
+def breathing_attr(frame: int, activity_rate: float = 0.0) -> int:
+    """Return a border attr that pulses between dim and bright based on activity.
+
+    activity_rate: tool events per second (0.0 = idle, >1.0 = busy).
+    Returns a curses color pair that oscillates via sine wave.
+    """
+    if activity_rate <= 0:
+        # Very slow breathing when idle (6s cycle = ~30 frames at 5fps)
+        cycle_frames = 30
+    elif activity_rate < 0.5:
+        # Normal breathing (3.5s cycle = ~17 frames)
+        cycle_frames = 17
+    else:
+        # Fast breathing when busy (2s cycle = ~10 frames)
+        cycle_frames = 10
+
+    phase = math.sin(2 * math.pi * frame / cycle_frames)
+    # phase ranges -1 to 1; map to 0 or 1 (two brightness levels)
+    if phase > 0:
+        return BORDER_BRIGHT
+    return BORDER_DIM
+
+
+def warmth_attr(last_tool_time_str: str) -> int:
+    """Return a color attr based on how recently the session had tool activity.
+
+    Recent activity = warm (YELLOW). Aging = WHITE. Cold = DIM.
+    """
+    if not last_tool_time_str:
+        return DIM
+    try:
+        last = datetime.fromisoformat(last_tool_time_str).replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+    except Exception:
+        return DIM
+
+    if age < 10:
+        return YELLOW  # hot — active right now
+    elif age < 60:
+        return GREEN   # warm — active recently
+    elif age < 300:
+        return WHITE   # cooling — been a few minutes
+    elif age < 600:
+        return CYAN    # cool
+    else:
+        return DIM     # cold — stale
 
 
 # ── GAME OF LIFE ─────────────────────────────────────────────
@@ -1460,6 +1521,11 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     team_session_ids = team_data["team_session_ids"]
     teams = team_data["teams"]
 
+    # Alive layer: global activity rate (tool events per second across all sessions)
+    total_activity = sum(sum(b) for b in activity.values())  # total tool events in last 60s
+    activity_rate = total_activity / 60.0 if total_activity else 0.0
+    border_attr = breathing_attr(frame, activity_rate)
+
     # Solo sessions: exclude team members (shown in TEAMS section instead)
     active = [s for s in active_all if s["session_id"] not in team_session_ids]
 
@@ -1578,7 +1644,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             box_title = f"TEAMS  {len(teams)} teams \u00b7 {n_team_members} active"
 
         teams_first_idx = len(visible_items)
-        draw_box(stdscr, cr, 0, teams_h, lw, title=box_title)
+        draw_box(stdscr, cr, 0, teams_h, lw, title=box_title, border_attr=border_attr)
         tr = cr + 1  # first content row inside box
 
         for team in teams:
@@ -1648,7 +1714,9 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     L(tr, base + 5, f"{dur:>5}", YELLOW)
                     L(tr, base + 11, sid_short, DIM)
                     L(tr, base + 18, teammate_name, WHITE)
-                    L(tr, lw - 12, spark, CYAN)
+                    m_tools = cache.get("session_tools", {}).get(m["session_id"], [])
+                    m_spark_ts = m_tools[-1]["created_at"] if m_tools else ""
+                    L(tr, lw - 12, spark, warmth_attr(m_spark_ts))
                 tr += 1
 
                 # Active task row under this member
@@ -1695,7 +1763,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         sess_title = f"SESSIONS  {' \u00b7 '.join(sess_counts)}" if sess_counts else "SESSIONS"
 
         sess_first_idx = len(visible_items)
-        draw_box(stdscr, cr, 0, sess_h, lw, title=sess_title)
+        draw_box(stdscr, cr, 0, sess_h, lw, title=sess_title, border_attr=border_attr)
         sr = cr + 1
 
         for s in active:
@@ -1746,7 +1814,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 L(sr, 4, f"{run_dur:>6}", YELLOW)
                 L(sr, 11, sid_short, DIM)
                 L(sr, 18, prompt, WHITE)
-                L(sr, lw - 12, spark, CYAN)
+                # Warmth gradient: sparkline color based on most recent tool event
+                s_tools = cache.get("session_tools", {}).get(sid, [])
+                spark_ts = s_tools[-1]["created_at"] if s_tools else ""
+                L(sr, lw - 12, spark, warmth_attr(spark_ts))
             sr += 1
 
             # Inline tool line (most recent tool call for this session)
@@ -1809,7 +1880,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
     elif not teams:
         # No active sessions or agents — show idle box
-        draw_box(stdscr, cr, 0, sess_h, lw, title="SESSIONS")
+        draw_box(stdscr, cr, 0, sess_h, lw, title="SESSIONS", border_attr=border_attr)
         L(cr + 1, 2, "no active sessions or agents", DIM)
         cr += sess_h
 
@@ -1822,11 +1893,11 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
     hist_first_idx = len(visible_items)
     if show_inline_detail:
-        draw_box(stdscr, cr, 0, hist_h, lw, title="DETAIL")
+        draw_box(stdscr, cr, 0, hist_h, lw, title="DETAIL", border_attr=border_attr)
         _draw_detail(stdscr, cr + 1, 2, cr + hist_h - 1, lw - 1,
                      sel_agent, cache)
     else:
-        draw_box(stdscr, cr, 0, hist_h, lw, title="HISTORY")
+        draw_box(stdscr, cr, 0, hist_h, lw, title="HISTORY", border_attr=border_attr)
         hr = cr + 1
 
         history = []
@@ -1951,6 +2022,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     sr += 1
                 sr += 1
 
+        # Idle drift: when no keyboard input for 30s, numbers occasionally wobble ±1
+        idle_secs = time.time() - state.get("last_input_time", time.time())
+        drift_active = idle_secs > 30
+
         # Agent rankings
         if top_agents and sr < max_sr - 1:
             L(sr, 2, f"AGENTS  {range_label}", CYAN)
@@ -1964,6 +2039,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 tag = dir_tag(entry.get("cwd", ""))
                 atype = entry["agent_type"] or "?"
                 cnt = entry["cnt"]
+                # Idle drift: wobble count ±1 for one frame
+                dcnt = cnt
+                if drift_active and frame % 40 == 0 and random.random() < 0.3:
+                    dcnt = cnt + random.choice([-1, 1])
                 bar = _bar(cnt, max_a)
                 col1 = tag.ljust(tag_w)
                 col2 = atype.ljust(type_w)
@@ -1978,9 +2057,9 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                         stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                     except curses.error:
                         pass
-                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", SEL)
+                    L(sr, 2, f"{col1}  {col2}  {bar} {dcnt}", SEL)
                 else:
-                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
+                    L(sr, 2, f"{col1}  {col2}  {bar} {dcnt}", DIM)
                 sr += 1
             sr += 1
 
@@ -1997,6 +2076,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 tag = dir_tag(entry.get("cwd", ""))
                 tname = entry["tool_name"] or "?"
                 cnt = entry["cnt"]
+                # Idle drift: wobble count ±1 for one frame
+                dcnt = cnt
+                if drift_active and frame % 40 == 0 and random.random() < 0.3:
+                    dcnt = cnt + random.choice([-1, 1])
                 bar = _bar(cnt, max_t)
                 col1 = tag.ljust(ttag_w)
                 col2 = tname.ljust(tname_w)
@@ -2011,9 +2094,9 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                         stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                     except curses.error:
                         pass
-                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", SEL)
+                    L(sr, 2, f"{col1}  {col2}  {bar} {dcnt}", SEL)
                 else:
-                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
+                    L(sr, 2, f"{col1}  {col2}  {bar} {dcnt}", DIM)
                 sr += 1
 
         if len(visible_items) > stats_first_idx:
@@ -2147,6 +2230,18 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                         cx += 1
                     lr += 1
 
+    # -- Text shimmer (CRT flicker) --
+    if frame % 3 == 0:  # ~1.6 chars/sec at 5fps
+        shimmer_row = random.randint(content_top + 1, max(content_top + 2, h - 3))
+        shimmer_col = random.randint(2, max(3, lw - 3))
+        try:
+            existing = stdscr.inch(shimmer_row, shimmer_col)
+            char_only = existing & 0xFF
+            if char_only > 32:  # only shimmer visible characters
+                stdscr.addch(shimmer_row, shimmer_col, char_only, DIM | curses.A_DIM)
+        except curses.error:
+            pass
+
     # -- Footer (full width) --
     status = state.get("status_msg", "")
     if status and time.time() < state.get("status_until", 0):
@@ -2160,6 +2255,20 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             safe_add(stdscr, h - 1, 0, " j/k=select  h/l=stats range  tab=viz  q=quit", w, DIM)
     else:
         safe_add(stdscr, h - 1, 0, " tab=viz  q=quit", w, DIM)
+
+    # -- Heartbeat cursor (bottom-right) --
+    n_active = len(r_agents) + len(active)
+    if n_active > 3:
+        blink_interval = 4    # ~800ms at 200ms/frame (72 BPM)
+    elif n_active > 0:
+        blink_interval = 6    # ~1200ms (50 BPM)
+    else:
+        blink_interval = 10   # ~2000ms (30 BPM)
+    heartbeat_visible = (frame % blink_interval) < (blink_interval // 2)
+    heartbeat_char = "●" if heartbeat_visible else "○"
+    heartbeat_color = GREEN if n_active > 0 else DIM
+    safe_add(stdscr, h - 1, w - 3, heartbeat_char, w, heartbeat_color)
+
     stdscr.refresh()
 
 
@@ -2177,7 +2286,11 @@ def main(stdscr, game_of_life=False):
 
     state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_until": 0.0,
                    "stats_range": 2, "game_of_life": game_of_life, "focus": "left", "detail_scroll": 0,
-                   "viz_mode": 0}
+                   "viz_mode": 0,
+                   # Alive layer
+                   "last_input_time": time.time(),
+                   "shimmer_positions": [],  # [(row, col, frame_added)]
+                   }
     cache: dict = {}
     refresh_data(cache, state["stats_range"])
     frame = 0
@@ -2187,6 +2300,8 @@ def main(stdscr, game_of_life=False):
         draw(stdscr, frame, state, cache)
         frame += 1
         ch = stdscr.getch()
+        if ch != -1:
+            state["last_input_time"] = time.time()
         if ch in (ord("q"), ord("Q")):
             break
         elif ch == 9:  # Tab — cycle viz mode forward
