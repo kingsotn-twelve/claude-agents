@@ -783,27 +783,34 @@ def _draw_viz_graph(stdscr, y, x, h, w, cache, state, frame):
         safe_add(stdscr, y + 1, x + 2, "select a session", rw_abs, DIM)
         return
 
-    # Query conversation turns + agents + tools for this session
-    layers = []  # [{prompt, agents: [{type, tools: [str]}]}]
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        prompts = conn.execute(
-            "SELECT prompt, created_at, seq FROM prompt WHERE session_id = ? ORDER BY seq ASC LIMIT 10",
-            (target_sid,)
-        ).fetchall()
-        agents = conn.execute(
-            "SELECT agent_id, agent_type, started_at, stopped_at FROM agent WHERE session_id = ? ORDER BY started_at ASC",
-            (target_sid,)
-        ).fetchall()
-        tools = conn.execute(
-            "SELECT tool_name, tool_label, created_at FROM tool_event WHERE session_id = ? ORDER BY created_at ASC LIMIT 50",
-            (target_sid,)
-        ).fetchall()
-        conn.close()
-    except Exception:
-        safe_add(stdscr, y + 1, x + 2, "(db error)", rw_abs, DIM)
-        return
+    # Query conversation turns (cached per session, refreshed with data)
+    graph_cache = state.setdefault("_graph_cache", {})
+    cache_key = f"{target_sid}:{frame // DATA_FRAMES}"  # refresh with data cycle
+    if graph_cache.get("key") != cache_key:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            prompts = conn.execute(
+                "SELECT prompt, created_at, seq FROM prompt WHERE session_id = ? ORDER BY seq ASC LIMIT 10",
+                (target_sid,)
+            ).fetchall()
+            agents = conn.execute(
+                "SELECT agent_id, agent_type, started_at, stopped_at FROM agent WHERE session_id = ? ORDER BY started_at ASC",
+                (target_sid,)
+            ).fetchall()
+            tools = conn.execute(
+                "SELECT tool_name, tool_label, created_at FROM tool_event WHERE session_id = ? ORDER BY created_at ASC LIMIT 50",
+                (target_sid,)
+            ).fetchall()
+            conn.close()
+            graph_cache.update({"key": cache_key, "prompts": [dict(r) for r in prompts],
+                                "agents": [dict(r) for r in agents], "tools": [dict(r) for r in tools]})
+        except Exception:
+            safe_add(stdscr, y + 1, x + 2, "(db error)", rw_abs, DIM)
+            return
+    prompts = graph_cache.get("prompts", [])
+    agents = graph_cache.get("agents", [])
+    tools = graph_cache.get("tools", [])
 
     if not prompts:
         safe_add(stdscr, y + 1, x + 2, f"session {target_sid[:7]}: no data", rw_abs, DIM)
@@ -1180,110 +1187,101 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
         P(pr, col, SYMBOLS["h"] * pw, DIM)
         pr += 1
 
-        # Query recent instances from DB
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            range_idx = cache.get("data", {}).get("_stats_range_idx", 2)
-            _, sql_interval = STATS_RANGES[min(range_idx, len(STATS_RANGES) - 1)]
-
-            if kind == "agent":
-                time_filter = f"AND started_at > datetime('now', '{sql_interval}')" if sql_interval else ""
-                cwd_filter = f"AND cwd = '{cwd}'" if cwd else ""
-                rows = conn.execute(
-                    f"""SELECT agent_id, agent_type, cwd, started_at, stopped_at
-                       FROM agent
-                       WHERE agent_type = ? {time_filter} {cwd_filter}
-                       ORDER BY started_at DESC LIMIT 8""",
-                    (atype,)
-                ).fetchall()
-
-                if rows:
-                    # Avg duration
-                    durs = []
-                    for r in rows:
-                        if r["stopped_at"] and r["started_at"]:
-                            try:
-                                s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
-                                e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
-                                durs.append((e - s).total_seconds())
-                            except Exception:
-                                pass
-                    if durs:
-                        avg = sum(durs) / len(durs)
-                        P(pr, col, f"avg duration: {fmt_dur('2000-01-01T00:00:00', f'2000-01-01T00:00:{int(avg):02d}') if avg < 60 else fmt_dur('2000-01-01T00:00:00', '2000-01-01T00:' + f'{int(avg//60):02d}:{int(avg%60):02d}')}", DIM)
-                        pr += 1
+        # Query recent instances from DB (cached per selection)
+        stat_cache = cache.setdefault("_stat_drill", {})
+        stat_key = f"{kind}:{atype}:{cwd}"
+        if stat_cache.get("key") != stat_key:
+            stat_cache["key"] = stat_key
+            stat_cache["data"] = None
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                conn.row_factory = sqlite3.Row
+                range_idx = cache.get("data", {}).get("_stats_range_idx", 2)
+                _, sql_interval = STATS_RANGES[min(range_idx, len(STATS_RANGES) - 1)]
+                if kind == "agent":
+                    time_filter = f"AND started_at > datetime('now', '{sql_interval}')" if sql_interval else ""
+                    cwd_filter = f"AND cwd = '{cwd}'" if cwd else ""
+                    stat_cache["data"] = {"rows": [dict(r) for r in conn.execute(
+                        f"SELECT agent_id, agent_type, cwd, started_at, stopped_at FROM agent WHERE agent_type = ? {time_filter} {cwd_filter} ORDER BY started_at DESC LIMIT 8",
+                        (atype,)).fetchall()]}
+                elif kind == "tool":
+                    time_filter = f"AND te.created_at > datetime('now', '{sql_interval}')" if sql_interval else ""
+                    cwd_filter = f"AND p.cwd = '{cwd}'" if cwd else ""
+                    stat_cache["data"] = {
+                        "labels": [dict(r) for r in conn.execute(
+                            f"SELECT te.tool_label, COUNT(*) as cnt FROM tool_event te LEFT JOIN prompt p ON te.session_id = p.session_id WHERE te.tool_name = ? {time_filter} {cwd_filter} GROUP BY te.tool_label ORDER BY cnt DESC LIMIT 8",
+                            (atype,)).fetchall()],
+                        "recent": [dict(r) for r in conn.execute(
+                            f"SELECT te.tool_label, te.created_at, te.session_id FROM tool_event te LEFT JOIN prompt p ON te.session_id = p.session_id WHERE te.tool_name = ? {time_filter} {cwd_filter} ORDER BY te.created_at DESC LIMIT 6",
+                            (atype,)).fetchall()],
+                    }
+                conn.close()
+            except Exception:
+                stat_cache["data"] = None
+        sd = stat_cache.get("data")
+        if sd and kind == "agent":
+            rows = sd.get("rows", [])
+            if rows:
+                durs = []
+                for r in rows:
+                    if r.get("stopped_at") and r.get("started_at"):
+                        try:
+                            s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
+                            e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
+                            durs.append((e - s).total_seconds())
+                        except Exception:
+                            pass
+                if durs:
+                    avg = int(sum(durs) / len(durs))
+                    P(pr, col, f"avg duration: {avg}s", DIM)
                     pr += 1
-
-                    P(pr, col, "RECENT RUNS", CYAN)
+                pr += 1
+                P(pr, col, "RECENT RUNS", CYAN)
+                pr += 1
+                for r in rows:
+                    if pr >= max_row_virtual:
+                        break
+                    aid = short_id(r["agent_id"])
+                    dur = fmt_dur(r["started_at"], r.get("stopped_at")) if r.get("stopped_at") else fmt_dur(r["started_at"])
+                    ts = fmt_time(r["started_at"])
+                    running = "\u25cf" if not r.get("stopped_at") else "\u25cb"
+                    P(pr, col, f"{running} {ts}  {dur:>6}  {aid}", DIM)
                     pr += 1
-                    for r in rows:
+            else:
+                P(pr, col, "(no recent runs)", DIM)
+        elif sd and kind == "tool":
+            label_rows = sd.get("labels", [])
+            if label_rows:
+                P(pr, col, "TOP TARGETS", CYAN)
+                pr += 1
+                max_lc = label_rows[0]["cnt"] if label_rows else 1
+                for lr in label_rows:
+                    if pr >= max_row_virtual:
+                        break
+                    tl = lr["tool_label"] or "(none)"
+                    tc = lr["cnt"]
+                    bw = 6
+                    filled = int(tc / max_lc * bw) if max_lc > 0 else 0
+                    bar = "\u2588" * filled + "\u2591" * (bw - filled)
+                    P(pr, col, f"{bar} {tc:>3}  {tl[:pw - 14]}", DIM)
+                    pr += 1
+                pr += 1
+                recent_rows = sd.get("recent", [])
+                if recent_rows and pr < max_row_virtual:
+                    P(pr, col, "RECENT", CYAN)
+                    pr += 1
+                    for rr in recent_rows:
                         if pr >= max_row_virtual:
                             break
-                        aid = short_id(r["agent_id"])
-                        dur = fmt_dur(r["started_at"], r["stopped_at"]) if r["stopped_at"] else fmt_dur(r["started_at"])
-                        ts = fmt_time(r["started_at"])
-                        running = "\u25cf" if not r["stopped_at"] else "\u25cb"
-                        P(pr, col, f"{running} {ts}  {dur:>6}  {aid}", DIM)
+                        ts = fmt_time(rr["created_at"])
+                        tl = rr["tool_label"] or ""
+                        sid = short_session(rr["session_id"])
+                        P(pr, col, f"{ts}  {sid}  {tl[:pw - 18]}", DIM)
                         pr += 1
-                else:
-                    P(pr, col, "(no recent runs)", DIM)
-
-            elif kind == "tool":
-                time_filter = f"AND te.created_at > datetime('now', '{sql_interval}')" if sql_interval else ""
-                cwd_filter = f"AND p.cwd = '{cwd}'" if cwd else ""
-                # Top labels for this tool
-                label_rows = conn.execute(
-                    f"""SELECT te.tool_label, COUNT(*) as cnt
-                       FROM tool_event te
-                       LEFT JOIN prompt p ON te.session_id = p.session_id
-                       WHERE te.tool_name = ? {time_filter} {cwd_filter}
-                       GROUP BY te.tool_label ORDER BY cnt DESC LIMIT 8""",
-                    (atype,)
-                ).fetchall()
-
-                if label_rows:
-                    P(pr, col, "TOP TARGETS", CYAN)
-                    pr += 1
-                    max_lc = label_rows[0]["cnt"] if label_rows else 1
-                    for lr in label_rows:
-                        if pr >= max_row_virtual:
-                            break
-                        tl = lr["tool_label"] or "(none)"
-                        tc = lr["cnt"]
-                        bar_w = 6
-                        filled = int(tc / max_lc * bar_w) if max_lc > 0 else 0
-                        bar = "\u2588" * filled + "\u2591" * (bar_w - filled)
-                        P(pr, col, f"{bar} {tc:>3}  {tl[:pw - 14]}", DIM)
-                        pr += 1
-
-                    pr += 1
-                    # Recent uses
-                    recent_rows = conn.execute(
-                        f"""SELECT te.tool_label, te.created_at, te.session_id
-                           FROM tool_event te
-                           LEFT JOIN prompt p ON te.session_id = p.session_id
-                           WHERE te.tool_name = ? {time_filter} {cwd_filter}
-                           ORDER BY te.created_at DESC LIMIT 6""",
-                        (atype,)
-                    ).fetchall()
-                    if recent_rows and pr < max_row_virtual:
-                        P(pr, col, "RECENT", CYAN)
-                        pr += 1
-                        for rr in recent_rows:
-                            if pr >= max_row_virtual:
-                                break
-                            ts = fmt_time(rr["created_at"])
-                            tl = rr["tool_label"] or ""
-                            sid = short_session(rr["session_id"])
-                            P(pr, col, f"{ts}  {sid}  {tl[:pw - 18]}", DIM)
-                            pr += 1
-                else:
-                    P(pr, col, "(no recent uses)", DIM)
-
-            conn.close()
-        except Exception:
-            P(pr, col, "(db error)", DIM)
+            else:
+                P(pr, col, "(no recent uses)", DIM)
+        else:
+            P(pr, col, "(no data)", DIM)
 
     else:
         # Nothing selected — show keybinding hints
@@ -2020,8 +2018,8 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     stdscr.refresh()
 
 
-RENDER_MS = 100     # redraw interval (smooth animations)
-DATA_FRAMES = 20    # refresh DB every N frames (~2s at 100ms)
+RENDER_MS = 200     # redraw interval (5 FPS — smooth enough, less CPU)
+DATA_FRAMES = 10    # refresh DB every N frames (~2s at 200ms)
 
 
 def main(stdscr, game_of_life=False):
