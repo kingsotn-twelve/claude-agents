@@ -63,6 +63,18 @@ interface Tree {
   regrowTimer: number;
 }
 
+interface Building {
+  id: string;
+  x: number;
+  y: number;
+  name: string;
+  description: string;
+  effect: string;           // "happiness+5_nearby" | "food_spawn" | "pollution_reduce" | "shelter"
+  pixels: Array<{x: number; y: number; color: string}>;  // 8x8 pixel art
+  builtBy: string;          // creature id
+  builtAt: number;          // tick
+}
+
 // Feature 3: Bone harvesting
 interface Bone {
   x: number;
@@ -84,6 +96,7 @@ interface GameState {
   trees: Tree[];
   food: FoodItem[];
   bones: Bone[];
+  buildings: Building[];
   resources: { wood: number; gems: number; bones: number };
   tool: ToolType;
   tick: number;
@@ -122,6 +135,10 @@ interface GameState {
   petitionVisible: boolean;
   pendingGrants: string[];
   godRelationship: 'unknown' | 'benevolent' | 'capricious' | 'absent' | 'feared';
+  // Compute budget system
+  computeBudget: number;
+  tokensSpent: number;
+  computeRating: number;
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -174,6 +191,7 @@ const state: GameState = {
   trees: [],
   food: [],
   bones: [],
+  buildings: [],
   resources: { wood: 0, gems: 0, bones: 0 },
   tool: 'feed',
   tick: 0,
@@ -207,6 +225,9 @@ const state: GameState = {
   petitionVisible: false,
   pendingGrants: [],
   godRelationship: 'unknown',
+  computeBudget: 50000,
+  tokensSpent: 0,
+  computeRating: 50,
 };
 
 // Feature 2: Player action tracking
@@ -512,6 +533,7 @@ function maslowTier(c: Creature): number {
 }
 
 async function handleCreatureCreatureInteraction(a: Creature, b: Creature): Promise<void> {
+  if (state.computeBudget < 500) return;
   setCooldown(a.id ?? '', b.id ?? '');
 
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
@@ -552,7 +574,11 @@ Same-lineage creatures lean toward bond/trade. Hungry creatures compete. Deltas 
         messages: [{ role: 'user', content: context }],
       }),
     });
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const usage = data.usage;
+    const tokensUsed = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     const result = JSON.parse(data.content?.[0]?.text ?? '{}') as {
       outcome?: string;
       a_delta?: { hunger?: number; happiness?: number; vx?: number; vy?: number };
@@ -737,6 +763,7 @@ function loadWorldState(callback: (loaded: boolean) => void): void {
 // ── FEATURE 1: SELF-EVOLVING BEHAVIOR ─────────────────────
 
 async function evolveChildBehavior(parent: Creature, child: Creature): Promise<void> {
+  if (state.computeBudget < 500) return;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   if (!apiKey) return;
 
@@ -772,7 +799,10 @@ if (creature.happiness > 80) { creature.vy -= 0.1; }`,
       }),
     });
 
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     const code = data.content?.[0]?.text?.trim() || '';
     child.behaviorCode = code;
     child.evolutionGeneration = (parent.evolutionGeneration || 0) + 1;
@@ -791,6 +821,7 @@ if (creature.happiness > 80) { creature.vy -= 0.1; }`,
 // ── FEATURE 2: PLAYER PROFILE ─────────────────────────────
 
 async function updatePlayerProfile(): Promise<void> {
+  if (state.computeBudget < 500) return;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   if (!apiKey) return;
 
@@ -812,7 +843,10 @@ async function updatePlayerProfile(): Promise<void> {
         }],
       }),
     });
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     state.playerProfile = data.content?.[0]?.text?.trim() || '';
   } catch (e) {
     console.warn('updatePlayerProfile failed:', e);
@@ -822,6 +856,7 @@ async function updatePlayerProfile(): Promise<void> {
 // ── FEATURE 4: WORLD THRESHOLD EVENTS ─────────────────────
 
 async function checkWorldThresholds(): Promise<void> {
+  if (state.computeBudget < 500) return;
   const pop = state.creatures.filter(c => c.alive).length;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   if (!apiKey) return;
@@ -848,7 +883,10 @@ async function checkWorldThresholds(): Promise<void> {
           }],
         }),
       });
-      const data = await resp.json() as { content?: Array<{ text: string }> };
+      const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+      const tokensUsedThreshold = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+      state.tokensSpent += tokensUsedThreshold;
+      state.computeBudget = Math.max(0, state.computeBudget - tokensUsedThreshold);
       try {
         const ev = JSON.parse(data.content?.[0]?.text || '{}') as {
           event?: string;
@@ -883,6 +921,7 @@ let lastEvolutionDate = '';  // tracks the date of the last holistic evolution
 // ── GOD / PETITION SYSTEM ─────────────────────────────────
 
 async function generateCreatureProposal(creature: Creature): Promise<void> {
+  if (state.computeBudget < 500) return;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   if (!apiKey) return;
   try {
@@ -896,7 +935,10 @@ async function generateCreatureProposal(creature: Creature): Promise<void> {
         messages: [{ role: 'user', content: `hunger=${Math.round(creature.hunger)} happiness=${Math.round(creature.happiness)} gen=${creature.evolutionGeneration ?? 0} lineage=${creature.lineage} epoch=${epochName(state.epoch ?? 0)} events=${creature.eventLog?.slice(-2).join(';') ?? 'none'} denials=${creature.deniedCount ?? 0}` }],
       }),
     });
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     const proposal = data.content?.[0]?.text?.trim() ?? '';
     if (proposal) {
       creature.proposals = [...(creature.proposals ?? []), proposal].slice(-3);
@@ -905,6 +947,7 @@ async function generateCreatureProposal(creature: Creature): Promise<void> {
 }
 
 async function synthesizePetition(): Promise<void> {
+  if (state.computeBudget < 500) return;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   const alive = state.creatures.filter(c => c.alive);
 
@@ -942,7 +985,10 @@ Maximum 4 items. Merge similar requests. Rank by urgency. Keep each request conc
         messages: [{ role: 'user', content: `All proposals:\n${allProposals.join('\n')}\n\nPopulation: ${alive.length} | Epoch: ${epochName(state.epoch ?? 0)} | God relationship: ${state.godRelationship}` }],
       }),
     });
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     const parsed = JSON.parse(data.content?.[0]?.text?.trim() ?? '[]') as Array<{ text: string; urgency: number; lineage: string }>;
     state.throngPetition = parsed.slice(0, 4);
     state.petitionVisible = true;
@@ -995,6 +1041,7 @@ function grantPetition(idx: number): void {
   const grants = state.pendingGrants.length;
   state.godRelationship = grants > 5 ? 'benevolent' : grants > 2 ? 'capricious' : 'unknown';
   state.observedPrinciples.unshift(`God granted: ${petition.text.slice(0, 40)}`);
+  state.computeRating = Math.min(100, state.computeRating + 15);
 }
 
 function denyPetition(idx: number): void {
@@ -1014,9 +1061,11 @@ function denyPetition(idx: number): void {
   state.lastEventTimer = 300;
   state.throngPetition.splice(idx, 1);
   state.godRelationship = 'capricious';
+  state.computeRating = Math.max(0, state.computeRating - 5);
 }
 
 async function runHolisticEvolution(): Promise<void> {
+  if (state.computeBudget < 500) return;
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
   if (!apiKey) return;
 
@@ -1073,7 +1122,10 @@ Return JSON only:
       }),
     });
 
-    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
     const plan = JSON.parse(data.content?.[0]?.text || '{}') as {
       epoch_change?: number | null;
       new_principle?: string;
