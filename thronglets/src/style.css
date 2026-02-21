@@ -1,0 +1,104 @@
+/* Thronglets — retro pixel art god-game */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #1a1a2e;
+  overflow: hidden;
+  font-family: 'Press Start 2P', monospace;
+  image-rendering: pixelated;
+  cursor: default;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: calc(100vh - 48px);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Toolbar — bottom bar with tool buttons */
+#toolbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: #16213e;
+  border-top: 2px solid #0f3460;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  z-index: 10;
+}
+
+.tool {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  padding: 8px 16px;
+  background: #0f3460;
+  color: #e0e0e0;
+  border: 2px solid #533483;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: none; /* hard cuts, no smooth transitions */
+}
+
+.tool:hover {
+  background: #533483;
+  color: #fff;
+}
+
+.tool.active {
+  background: #e94560;
+  color: #fff;
+  border-color: #e94560;
+}
+
+/* HUD — top-left resource counters */
+#hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 16px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  color: #e0e0e0;
+  text-shadow: 2px 2px 0 #000;
+  z-index: 10;
+}
+
+#hud span {
+  background: rgba(22, 33, 62, 0.85);
+  padding: 6px 10px;
+  border: 1px solid #0f3460;
+  border-radius: 2px;
+}
+
+/* CRT scanline overlay */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  z-index: 100;
+}
