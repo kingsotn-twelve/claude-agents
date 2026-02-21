@@ -160,10 +160,11 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
 
         # Active sessions: latest prompt per session.
         # A session is "active" if un-stopped AND one of:
+        #   - has lastWaitUserAt set (terminal is open, waiting for input — no time limit)
+        #   - had tool activity in the last 30 min (actively running)
         #   - created within the last 5 min (grace period before first tool call)
-        #   - waiting for user input within the last 30 min (time-bounded to avoid forever-stuck sessions)
-        #   - had tool activity in the last 10 min (actively running)
-        # This correctly hides sessions killed without Stop firing.
+        # Sessions only disappear when Stop fires (terminal closed) or ghost detection (no
+        # lastWaitUserAt and no recent tools = probably killed without Stop).
         for row in conn.execute(
             """SELECT p.session_id, p.prompt, p.cwd, p.created_at, p.seq, p.lastWaitUserAt
                FROM prompt p
@@ -172,8 +173,8 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
                    FROM prompt
                    WHERE stoped_at IS NULL
                      AND (
-                       created_at > datetime('now', '-5 minutes')
-                       OR (lastWaitUserAt IS NOT NULL AND lastWaitUserAt > datetime('now', '-4 hours'))
+                       lastWaitUserAt IS NOT NULL
+                       OR created_at > datetime('now', '-5 minutes')
                        OR session_id IN (
                          SELECT DISTINCT session_id FROM tool_event
                          WHERE created_at > datetime('now', '-30 minutes')
@@ -1591,9 +1592,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 L(sr, 18, prompt, SEL)
                 L(sr, lw - 12, spark, SEL_DIM)
             elif waiting:
-                total_dur = fmt_dur(s["created_at"])
+                # Frozen clock: duration from start to when it stopped working
+                frozen_dur = fmt_dur(s["created_at"], s.get("lastWaitUserAt"))
                 L(sr, 2, "\u25a1", DIM)  # □ paused
-                L(sr, 4, f"{total_dur:>6}", DIM)
+                L(sr, 4, f"{frozen_dur:>6}", DIM)
                 L(sr, 11, sid_short, DIM)
                 L(sr, 18, prompt, DIM)
             else:
