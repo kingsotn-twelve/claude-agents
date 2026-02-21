@@ -842,6 +842,8 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
     # Reset visible items for keyboard nav
     visible_items: list[dict] = []
+    # Track panel index ranges for border highlighting: [(y, h, first_idx, title)]
+    panel_ranges: list[tuple] = []
 
     n_team_members = sum(len(t["members"]) for t in teams)
     total_live = len(active) + len(r_agents) + n_team_members
@@ -926,6 +928,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         else:
             box_title = f"TEAMS  {len(teams)} teams \u00b7 {n_team_members} active"
 
+        teams_first_idx = len(visible_items)
         draw_box(stdscr, cr, 0, teams_h, lw, title=box_title)
         tr = cr + 1  # first content row inside box
 
@@ -1023,6 +1026,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                         L(tr, base + 7, task_text, YELLOW)
                     tr += 1
 
+        panel_ranges.append((content_top, teams_h, teams_first_idx, len(visible_items) - 1))
         cr += teams_h
 
     # -- SESSIONS panel --
@@ -1041,6 +1045,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             sess_counts.append(f"{len(r_agents)} agent{'s' if len(r_agents) != 1 else ''}")
         sess_title = f"SESSIONS  {' \u00b7 '.join(sess_counts)}" if sess_counts else "SESSIONS"
 
+        sess_first_idx = len(visible_items)
         draw_box(stdscr, cr, 0, sess_h, lw, title=sess_title)
         sr = cr + 1
 
@@ -1153,6 +1158,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 L(sr, lw - 12, a_spark, CYAN)
             sr += 1
 
+        panel_ranges.append((cr, sess_h, sess_first_idx, len(visible_items) - 1))
         cr += sess_h
 
     elif not teams:
@@ -1168,6 +1174,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     sel_agent = visible_items[sel_idx] if 0 <= sel_idx < len(visible_items) else None
     show_inline_detail = sel_agent is not None and not split
 
+    hist_first_idx = len(visible_items)
     if show_inline_detail:
         draw_box(stdscr, cr, 0, hist_h, lw, title="DETAIL")
         _draw_detail(stdscr, cr + 1, 2, cr + hist_h - 1, lw - 1,
@@ -1257,6 +1264,9 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 hr += 1
                 shown += 1
 
+    if len(visible_items) > hist_first_idx:
+        panel_ranges.append((cr, hist_h, hist_first_idx, len(visible_items) - 1))
+
     # -- STATS panel (bottom-left, below history) --
     cr_stats = cr + hist_h
     if stats_lh >= 4:
@@ -1338,17 +1348,29 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     else:
         state["selected"] = -1
 
+    # Highlight the left panel that contains the selected item
+    if state.get("focus") == "left" and sel_idx >= 0:
+        for py, ph, fi, li in panel_ranges:
+            if fi <= sel_idx <= li:
+                draw_box(stdscr, py, 0, ph, lw, border_attr=CYAN)
+                break
+
     # -- Right panel (DETAIL + LIFE) --
     if split and rw > 10:
         total_rh = h - content_top - 1
         if sel_agent:
             content_rows = _detail_content_height(sel_agent, rw - 4, cache)
-            detail_h = min(content_rows + 2, total_rh - 4)  # +2 for box borders, leave room for Life
             focused = state.get("focus") == "right"
+            # When focused, cap height to allow scrolling; otherwise fit content
+            max_detail = min(12, total_rh - 4) if focused else total_rh - 4
+            detail_h = min(content_rows + 2, max_detail)
             title_str = "\u25b6 DETAIL" if focused else "DETAIL"
             draw_box(stdscr, content_top, rx, detail_h, rw, title=title_str,
                      border_attr=CYAN if focused else 0)
-            scroll = state.get("detail_scroll", 0) if focused else 0
+            # Clamp scroll to content bounds
+            max_scroll = max(0, content_rows - (detail_h - 2))
+            state["detail_scroll"] = min(state.get("detail_scroll", 0), max_scroll)
+            scroll = state["detail_scroll"] if focused else 0
             _draw_detail(stdscr, content_top + 1, rx + 2, content_top + detail_h - 1, rx + rw - 1,
                          sel_agent, cache, scroll=scroll)
         else:
@@ -1447,9 +1469,11 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         safe_add(stdscr, h - 1, 0, f" {status}", w, YELLOW)
     elif visible_items:
         if state.get("focus") == "right":
-            safe_add(stdscr, h - 1, 0, " j/k=scroll detail  h=back  esc=back  q=quit", w, DIM)
+            safe_add(stdscr, h - 1, 0, " j/k=scroll  h=back  enter=open  q=quit", w, DIM)
+        elif state.get("selected", -1) >= 0:
+            safe_add(stdscr, h - 1, 0, " j/k=select  l/enter=detail  h/l=stats  esc=deselect  q=quit", w, DIM)
         else:
-            safe_add(stdscr, h - 1, 0, " j/k=select  l=detail  h/l=stats range  esc=deselect  q=quit", w, DIM)
+            safe_add(stdscr, h - 1, 0, " j/k=select  h/l=stats range  q=quit", w, DIM)
     else:
         safe_add(stdscr, h - 1, 0, " q=quit", w, DIM)
     stdscr.refresh()
@@ -1486,41 +1510,43 @@ def main(stdscr, game_of_life=False):
                 state["detail_scroll"] = 0
             else:
                 state["selected"] = -1
-        elif state["focus"] == "right":
-            # Right panel focused: j/k scrolls detail, h goes back
-            if ch in (ord("j"), curses.KEY_DOWN):
+        elif ch in (ord("j"), curses.KEY_DOWN):
+            if state["focus"] == "right":
                 state["detail_scroll"] = state.get("detail_scroll", 0) + 1
-            elif ch in (ord("k"), curses.KEY_UP):
-                state["detail_scroll"] = max(0, state.get("detail_scroll", 0) - 1)
-            elif ch in (ord("h"), curses.KEY_LEFT):
-                state["focus"] = "left"
-                state["detail_scroll"] = 0
-        else:
-            # Left panel focused
-            if ch in (ord("j"), curses.KEY_DOWN):
+            else:
                 agents = state["visible_items"]
                 if agents:
                     state["selected"] = min(state["selected"] + 1, len(agents) - 1) if state["selected"] >= 0 else 0
-            elif ch in (ord("k"), curses.KEY_UP):
-                if state["selected"] > 0:
-                    state["selected"] -= 1
-            elif ch in (ord("l"), curses.KEY_RIGHT):
-                if state["selected"] >= 0:
-                    # Enter detail panel
-                    state["focus"] = "right"
-                    state["detail_scroll"] = 0
-                else:
-                    # Cycle stats range
-                    old = state["stats_range"]
-                    state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
-                    if state["stats_range"] != old:
-                        refresh_data(cache, state["stats_range"])
-            elif ch in (ord("h"), curses.KEY_LEFT):
+        elif ch in (ord("k"), curses.KEY_UP):
+            if state["focus"] == "right":
+                state["detail_scroll"] = max(0, state.get("detail_scroll", 0) - 1)
+            elif state["selected"] > 0:
+                state["selected"] -= 1
+        elif ch in (ord("l"), curses.KEY_RIGHT):
+            if state["focus"] == "left" and state["selected"] >= 0:
+                state["focus"] = "right"
+                state["detail_scroll"] = 0
+            else:
+                old = state["stats_range"]
+                state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
+                if state["stats_range"] != old:
+                    refresh_data(cache, state["stats_range"])
+        elif ch in (ord("h"), curses.KEY_LEFT):
+            if state["focus"] == "right":
+                state["focus"] = "left"
+                state["detail_scroll"] = 0
+            else:
                 old = state["stats_range"]
                 state["stats_range"] = max(old - 1, 0)
                 if state["stats_range"] != old:
                     refresh_data(cache, state["stats_range"])
-            elif ch in (10, 13, curses.KEY_ENTER):
+        elif ch in (10, 13, curses.KEY_ENTER):
+            if state["focus"] == "left" and state["selected"] >= 0:
+                # Enter focuses detail panel
+                state["focus"] = "right"
+                state["detail_scroll"] = 0
+            elif state["focus"] == "right":
+                # Enter on detail opens agent transcript
                 idx = state["selected"]
                 agents = state["visible_items"]
                 if 0 <= idx < len(agents):
