@@ -10,6 +10,7 @@ import curses
 import glob
 import random
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -2162,7 +2163,11 @@ def main(stdscr, game_of_life=False):
 
     state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_until": 0.0,
                    "stats_range": 2, "game_of_life": game_of_life, "focus": "left", "detail_scroll": 0,
-                   "viz_mode": 0}
+                   "viz_mode": 0,
+                   # Alive layer
+                   "last_input_time": time.time(),
+                   "shimmer_positions": [],  # [(row, col, frame_added)]
+                   }
     cache: dict = {}
     refresh_data(cache, state["stats_range"])
     frame = 0
