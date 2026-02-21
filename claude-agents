@@ -1276,7 +1276,9 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             for i, r in enumerate(STATS_RANGES)
         )
         stats_first_idx = len(visible_items)
-        draw_box(stdscr, cr_stats, 0, stats_lh, lw, title=f"STATS  {range_tabs}")
+        stats_hl_active = state.get("focus") == "left" and state.get("selected", -1) < 0
+        draw_box(stdscr, cr_stats, 0, stats_lh, lw, title=f"STATS  {range_tabs}",
+                 border_attr=CYAN if stats_hl_active else 0)
         sr = cr_stats + 1
         max_sr = cr_stats + stats_lh - 1
 
