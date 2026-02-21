@@ -418,33 +418,71 @@ end tell"""
 
 
 def focus_session_in_iterm2(cwd: str) -> str:
-    """Find and focus the iTerm2 pane whose working directory matches cwd."""
+    """Find and focus the iTerm2 pane running claude with matching cwd."""
     if not cwd:
         return "no cwd for session"
-    # Normalize: use basename for matching (handles trailing slashes, symlinks)
     target = cwd.rstrip("/")
+
+    # Step 1: Find claude processes, match cwd, get tty
+    target_tty = None
+    try:
+        ps_out = subprocess.run(
+            ["ps", "-eo", "pid,tty,command"], capture_output=True, text=True
+        ).stdout
+        for line in ps_out.splitlines():
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            cmd = parts[2]
+            # Match "claude" binary but not "claude-agents" or "claude-monitor"
+            if "claude-agent" in cmd or "claude-monitor" in cmd:
+                continue
+            if "claude" not in cmd:
+                continue
+            pid, tty = parts[0], parts[1]
+            if tty == "??" or not tty.startswith("tty"):
+                continue
+            # Check this process's cwd via lsof
+            try:
+                lsof = subprocess.run(
+                    ["lsof", "-p", pid, "-d", "cwd", "-Fn"],
+                    capture_output=True, text=True, timeout=2
+                ).stdout
+                for lsof_line in lsof.splitlines():
+                    if lsof_line.startswith("n") and lsof_line[1:].rstrip("/") == target:
+                        target_tty = f"/dev/{tty}"
+                        break
+            except Exception:
+                pass
+            if target_tty:
+                break
+    except Exception:
+        pass
+
+    if not target_tty:
+        return "no matching claude process found"
+
+    # Step 2: Focus the iTerm2 session with that tty
     script = f"""tell application "iTerm2"
   repeat with w in windows
-    repeat with t in tabs of w
-      repeat with s in sessions of t
-        try
-          set p to variable named "path" in s
-          if p ends with "{os.path.basename(target)}" or p is equal to "{target}" then
+    tell w
+      repeat with t in tabs
+        repeat with s in sessions of t
+          if tty of s is "{target_tty}" then
             select t
             activate
             return "ok"
           end if
-        end try
+        end repeat
       end repeat
-    end repeat
+    end tell
   end repeat
   return "not found"
 end tell"""
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    out = (r.stdout + r.stderr).strip()
-    if "ok" in out:
+    if "ok" in (r.stdout + r.stderr):
         return ""
-    return "session pane not found in iTerm2"
+    return "iTerm2 pane not found for tty"
 
 
 def fmt_dur(start_str: str, end_str: str | None = None) -> str:
