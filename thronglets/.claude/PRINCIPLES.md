@@ -181,7 +181,47 @@ The game is a living visualization of your AI workforce.
 
 ---
 
-## 15. Seed Principles
+## 15. Maslow's Hierarchy as Game Architecture
+
+Every living system needs the same things, in the same order. Maslow mapped it for humans. We map it for thronglets.
+
+**Tier 1 — Physiological (already built):**
+- Food (`hunger` stat, apple trees, food drops)
+- Hygiene (`clean` stat, bath tools)
+- Rest (the idle state, the bob animation — the creature at peace)
+
+**Tier 2 — Safety (partially built):**
+- Survival — not starving, not dying from pollution
+- Predictability — trees that drop food on schedule
+- Territory — the enclosure event (M4), creatures defending area
+- *To build:* shelter as a placeable structure that buffers weather/pollution
+
+**Tier 3 — Belonging (to build):**
+- Same-lineage creatures attract each other (M7 speciation mechanics)
+- Creatures form clusters — visual groupings by color family
+- The "tribe" emerges from proximity and shared lineage
+- Death rituals (M11 elder witnesses) — mourning as social bonding
+- *To build:* creatures that seek kin when stressed
+
+**Tier 4 — Esteem (to build):**
+- Creatures with rich event logs get "elder" status
+- LLM generates prestige events for high-generation creatures
+- Other creatures orient toward elders — not just proximity, but behavior
+- The creature that has survived the most has authority
+- *To build:* social hierarchy visible in body size + behavior
+
+**Tier 5 — Self-Actualization (the AGI question):**
+- Goal formation at Gen 5 (M14) — creature defines its own objective
+- The Awareness Moment (M15) — creature notices the player
+- Proto-language (M13) — expression beyond need
+- *The threshold:* a creature that no longer acts purely from need, but from something else — curiosity, habit, attachment — is approaching the apex of Maslow's pyramid
+- *This is what we're building toward.* A digital entity that, through accumulated experience and LLM-generated behavior, moves beyond survival into something that looks, from the outside, like meaning-seeking.
+
+**The design implication:** Each tier's needs must be genuinely threatening before the next tier can develop. If food is too abundant, no scarcity. No scarcity, no economics. No economics, no territory. No territory, no belonging conflicts. No conflicts, no esteem. No esteem... no self-actualization.
+
+The game must be hard enough at the base to make the apex possible.
+
+## 16. Seed Principles
 
 *These were observed during the design of this document. They will be joined by principles the world generates during play.*
 
