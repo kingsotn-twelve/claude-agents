@@ -82,7 +82,7 @@ interface Bone {
   age: number;
 }
 
-type ToolType = 'feed' | 'clean' | 'play' | 'chop';
+type ToolType = 'feed' | 'clean' | 'play' | 'chop' | 'observe' | 'merge' | 'smite' | 'bless';
 
 interface InteractionEvent {
   type: 'creature_creature' | 'creature_bone' | 'creature_tree' | 'creature_food_contest';
@@ -139,6 +139,15 @@ interface GameState {
   computeBudget: number;
   tokensSpent: number;
   computeRating: number;
+  // Speed control
+  simSpeed: number;
+  paused: boolean;
+  // Epoch transition banner
+  epochBannerTimer: number;
+  epochBannerText: string;
+  // Observe tool: tracks hover duration per creature id
+  observeHoverTick: number;
+  observeHoverTarget: string | null;
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -228,6 +237,12 @@ const state: GameState = {
   computeBudget: 50000,
   tokensSpent: 0,
   computeRating: 50,
+  simSpeed: 1.0,
+  paused: false,
+  epochBannerTimer: 0,
+  epochBannerText: '',
+  observeHoverTick: 0,
+  observeHoverTarget: null,
 };
 
 // Feature 2: Player action tracking
@@ -917,6 +932,7 @@ async function checkWorldThresholds(): Promise<void> {
 // ── 4:19 PM DAILY EVOLUTION ────────────────────────────────
 
 let lastEvolutionDate = '';  // tracks the date of the last holistic evolution
+let lastRenderedEpoch: number = 0;  // tracks last epoch seen by renderer for banner
 
 // ── GOD / PETITION SYSTEM ─────────────────────────────────
 
@@ -1213,6 +1229,60 @@ No async. No external calls. Return ONLY the function body.`,
 // ── LLM TOOL OUTCOMES ──────────────────────────────────────
 
 async function applyToolToCreature(tool: ToolType, creature: Creature): Promise<void> {
+  // Handle smite — instant kill, no LLM
+  if (tool === 'smite') {
+    creature.alive = false;
+    creature.diedAt = state.tick;
+    creature.eventLog = [...(creature.eventLog ?? []), 'smited by god'].slice(-10);
+    state.bones.push({ x: creature.x, y: creature.y, age: 0 });
+    state.lastEvent = `God smited ${creature.lineage?.slice(0, 4) ?? '????'} — judgment was final`;
+    state.lastEventTimer = 300;
+    playerActions.push(`smite on creature lineage=${creature.lineage?.slice(0, 4)}`);
+    return;
+  }
+
+  // Handle merge — fuse nearest other creature, no LLM
+  if (tool === 'merge') {
+    const others = state.creatures.filter(c => c.alive && c.id !== creature.id);
+    let nearest: Creature | null = null;
+    let nd = Infinity;
+    for (const o of others) {
+      const d = Math.sqrt((o.x - creature.x) ** 2 + (o.y - creature.y) ** 2);
+      if (d < 2 && d < nd) { nearest = o; nd = d; }
+    }
+    if (nearest) {
+      creature.eventLog = [...(creature.eventLog ?? []), ...(nearest.eventLog ?? [])].slice(-10);
+      creature.lineage = (creature.lineage ?? '').slice(0, 2) + (nearest.lineage ?? '').slice(2, 4);
+      creature.evolutionGeneration = Math.max(creature.evolutionGeneration ?? 0, nearest.evolutionGeneration ?? 0) + 1;
+      creature.hunger = (creature.hunger + nearest.hunger) / 2;
+      creature.happiness = Math.min(100, ((creature.happiness + nearest.happiness) / 2) + 20);
+      nearest.alive = false;
+      nearest.diedAt = state.tick;
+      state.lastEvent = `Merged ${creature.lineage?.slice(0, 4)} — new lineage formed`;
+      state.lastEventTimer = 300;
+      playerActions.push(`merge on creature lineage=${creature.lineage?.slice(0, 4)}`);
+    } else {
+      state.lastEvent = 'no creature within merge range (2 units)';
+      state.lastEventTimer = 180;
+    }
+    return;
+  }
+
+  // Handle bless — fill stats to 100, then call LLM for narrative
+  if (tool === 'bless') {
+    if (state.computeBudget < 500) {
+      state.lastEvent = 'not enough compute for blessing';
+      state.lastEventTimer = 180;
+      return;
+    }
+    creature.hunger = 100;
+    creature.clean = 100;
+    creature.happiness = 100;
+    creature.eventLog = [...(creature.eventLog ?? []), 'received divine blessing'].slice(-10);
+    state.computeRating = Math.min(100, state.computeRating + 10);
+    // Fall through to LLM for blessing narrative
+  }
+
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'] || '';
   if (!apiKey) {
     // Fallback deterministic behavior
@@ -1380,6 +1450,46 @@ async function generateHoverComment(creature: Creature): Promise<void> {
   } catch {
     state.observer.hoverComment = '';
   }
+}
+
+async function generateDeepObservation(creature: Creature): Promise<void> {
+  if (state.computeBudget < 300) {
+    state.lastEvent = 'not enough compute for deep observation';
+    state.lastEventTimer = 180;
+    return;
+  }
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) {
+    state.lastEvent = '[set ANTHROPIC_KEY to observe]';
+    state.lastEventTimer = 180;
+    return;
+  }
+  state.computeBudget = Math.max(0, state.computeBudget - 300);
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 120,
+        system: 'You write deep behavioral observations for a digital creature in a god-game. 2-3 sentences. Present tense. Scientific but poetic tone. Reveal hidden patterns or tendencies. No quotes around the whole text.',
+        messages: [{ role: 'user', content: `hunger=${Math.round(creature.hunger)} clean=${Math.round(creature.clean)} happy=${Math.round(creature.happiness)} state=${creature.state} gen=${creature.evolutionGeneration ?? 0} lineage=${creature.lineage} events=${creature.eventLog?.slice(-4).join(';') ?? 'none'} age=${Math.round(creature.age)}` }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const tokensUsed = (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0);
+    state.tokensSpent += tokensUsed;
+    state.computeBudget = Math.max(0, state.computeBudget - tokensUsed);
+    const observation = data.content?.[0]?.text?.trim() ?? '';
+    creature.eventLog = [...(creature.eventLog ?? []), `[observed] ${observation.slice(0, 60)}`].slice(-10);
+    state.observer.output = [
+      `> DEEP OBSERVE #${creature.id?.slice(0, 4)}`,
+      ...observation.match(/.{1,34}/g)?.slice(0, 4) ?? [],
+    ];
+    state.observer.outputAge = 0;
+    state.lastEvent = `Observed: ${observation.slice(0, 50)}`;
+    state.lastEventTimer = 360;
+  } catch { /* silent */ }
 }
 
 function updateObserver(dt: number): void {
@@ -1686,13 +1796,14 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
       ctx.closePath();
       ctx.stroke();
 
-      // Feature 4: Pollution overlay at world edges
+      // Pollution overlay at world edges — hexagonal blobs that grow with level
       if (pl > 0) {
         const distFromEdge = Math.min(wx, wy, WORLD_W - 1 - wx, WORLD_H - 1 - wy);
         const edgeBand = 3; // tiles deep from edge
         if (distFromEdge < edgeBand) {
           const strength = (edgeBand - distFromEdge) / edgeBand;
           const alpha = strength * (pl / 10) * 0.7;
+          // Base diamond overlay
           ctx.fillStyle = `rgba(136, 51, 170, ${alpha.toFixed(2)})`;
           ctx.beginPath();
           ctx.moveTo(sx, sy - TILE_H / 2);
@@ -1701,6 +1812,21 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
           ctx.lineTo(sx - TILE_W / 2, sy);
           ctx.closePath();
           ctx.fill();
+          // Hexagonal blob: draw a six-sided shape centered on tile for high pollution
+          if (pl >= 3 && strength > 0.3) {
+            const blobR = (TILE_W / 3) * (pl / 10) * strength;
+            const pulse = 1 + Math.sin(tick * 0.05 + wx * 1.3 + wy * 0.7) * 0.15;
+            ctx.fillStyle = `rgba(180, 50, 220, ${(alpha * 0.6).toFixed(2)})`;
+            ctx.beginPath();
+            for (let seg = 0; seg < 6; seg++) {
+              const ang = (seg / 6) * Math.PI * 2;
+              const bx = sx + Math.cos(ang) * blobR * pulse;
+              const by = sy - 4 + Math.sin(ang) * blobR * 0.6 * pulse;
+              seg === 0 ? ctx.moveTo(bx, by) : ctx.lineTo(bx, by);
+            }
+            ctx.closePath();
+            ctx.fill();
+          }
         }
       }
     }
@@ -1798,6 +1924,24 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
   drawObserver(ctx, w, h);
   if (state.petitionVisible && state.throngPetition.length > 0) {
     drawPetitionPanel(ctx, w, h);
+  }
+
+  // Epoch transition banner
+  if (state.epoch !== lastRenderedEpoch) {
+    lastRenderedEpoch = state.epoch ?? 0;
+    state.epochBannerTimer = 180;
+    state.epochBannerText = `THE AGE OF ${epochName(state.epoch ?? 0)} BEGINS`;
+  }
+  if ((state.epochBannerTimer ?? 0) > 0) {
+    state.epochBannerTimer = (state.epochBannerTimer ?? 0) - 1;
+    const alpha = Math.min(1, (state.epochBannerTimer ?? 0) / 30);
+    ctx.fillStyle = `rgba(0, 0, 10, ${alpha * 0.8})`;
+    ctx.fillRect(0, h / 2 - 40, w, 80);
+    ctx.font = '16px "Press Start 2P", monospace';
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.textAlign = 'center';
+    ctx.fillText(state.epochBannerText ?? '', w / 2, h / 2 + 6);
+    ctx.textAlign = 'left';
   }
 }
 
@@ -1969,10 +2113,14 @@ function updateHUD(): void {
   const gemsEl = document.getElementById('gems');
   const bonesEl = document.getElementById('bones');
   const profileEl = document.getElementById('player-profile');
+  const simspeedEl = document.getElementById('simspeed');
+  const worldtimeEl = document.getElementById('worldtime');
   if (popEl) popEl.textContent = `Pop: ${alive}`;
   if (woodEl) woodEl.textContent = `Wood: ${state.resources.wood}`;
   if (gemsEl) gemsEl.textContent = `Gems: ${state.resources.gems}`;
   if (bonesEl) bonesEl.textContent = `Bones: ${state.resources.bones}`;
+  if (simspeedEl) simspeedEl.textContent = state.paused ? 'PAUSED' : `${state.simSpeed}x`;
+  if (worldtimeEl) worldtimeEl.textContent = `Day ${Math.floor(state.tick / 7200)}`;
   // Feature 2: Player profile display
   if (profileEl) {
     profileEl.textContent = state.playerProfile ? `[ ${state.playerProfile} ]` : '';
@@ -1990,6 +2138,17 @@ function setupInput(canvas: HTMLCanvasElement): void {
     // P key triggers petition (for testing)
     if (e.key === 'p' || e.key === 'P') {
       void synthesizePetition();
+    }
+    // Speed control
+    if (e.key === '[') {
+      state.simSpeed = Math.max(0.1, state.simSpeed / 2);
+    }
+    if (e.key === ']') {
+      state.simSpeed = Math.min(8, state.simSpeed * 2);
+    }
+    if (e.key === ' ') {
+      e.preventDefault();
+      state.paused = !state.paused;
     }
   });
   document.querySelectorAll<HTMLButtonElement>('.tool').forEach(btn => {
@@ -2009,6 +2168,29 @@ function setupInput(canvas: HTMLCanvasElement): void {
       y: (e.clientY - rect.top) * scaleY,
     };
     state.mouseWorld = screenToWorldTile(state.mouseScreen.x, state.mouseScreen.y);
+
+    // Observe tool: track which creature is being hovered and for how long
+    if (state.tool === 'observe') {
+      const { x: wx, y: wy } = screenToWorld(state.mouseScreen.x, state.mouseScreen.y);
+      let hoveredId: string | null = null;
+      let hoveredCreature: Creature | null = null;
+      for (const c of state.creatures) {
+        if (!c.alive) continue;
+        const dist = (c.x - wx) ** 2 + (c.y - wy) ** 2;
+        if (dist < 6.25) { hoveredId = c.id ?? null; hoveredCreature = c; break; }
+      }
+      if (hoveredId && hoveredId === state.observeHoverTarget) {
+        state.observeHoverTick++;
+        // 60 ticks ≈ 1 second at 60fps — trigger deep observation
+        if (state.observeHoverTick >= 60 && hoveredCreature) {
+          state.observeHoverTick = -9999; // prevent re-trigger until cursor moves away
+          void generateDeepObservation(hoveredCreature);
+        }
+      } else {
+        state.observeHoverTarget = hoveredId;
+        state.observeHoverTick = 0;
+      }
+    }
   });
 
   canvas.addEventListener('click', (e: MouseEvent) => {
@@ -2093,10 +2275,78 @@ function setupInput(canvas: HTMLCanvasElement): void {
     }
 
     if (nearest) {
+      // observe tool activates on hover, not click — skip click dispatch
+      if (state.tool === 'observe') {
+        state.lastEvent = 'hover over a creature for 1s to observe';
+        state.lastEventTimer = 120;
+        return;
+      }
       // Call LLM to define outcome for any non-feed tool
       void applyToolToCreature(state.tool, nearest);
     }
   });
+}
+
+// ── CLAUDE AGENTS DB SYNC ──────────────────────────────────
+
+interface ClaudeAgent {
+  agent_id: string;
+  agent_type: string;
+  session_id: string;
+  cwd: string;
+  started_at: string;
+  stopped_at: string | null;
+}
+
+const syncedAgentIds = new Set<string>();
+
+async function syncClaudeAgents(): Promise<void> {
+  let agents: ClaudeAgent[] = [];
+
+  try {
+    // @ts-ignore — Tauri global
+    if (window.__TAURI__) {
+      // @ts-ignore
+      const result = await window.__TAURI__.core.invoke('get_claude_agents');
+      agents = JSON.parse(result) as ClaudeAgent[];
+    }
+  } catch {
+    return; // Not in Tauri, skip
+  }
+
+  for (const agent of agents) {
+    const alreadySynced = syncedAgentIds.has(agent.agent_id);
+
+    if (!alreadySynced && !agent.stopped_at) {
+      // New running agent → spawn thronglet near world center
+      syncedAgentIds.add(agent.agent_id);
+      const newC = createCreature(
+        WORLD_W / 2 + (Math.random() - 0.5) * 6,
+        WORLD_H / 2 + (Math.random() - 0.5) * 6
+      );
+      // Lineage derived from agent_type for visual speciation
+      let hash = 0;
+      for (let i = 0; i < agent.agent_type.length; i++) {
+        hash = ((hash << 5) - hash + agent.agent_type.charCodeAt(i)) & 0xFFFF;
+      }
+      newC.lineage = hash.toString(16).slice(0, 4).padStart(4, '0');
+      newC.id = agent.agent_id.slice(0, 7);
+      newC.eventLog = [`born as ${agent.agent_type} agent`];
+      newC.hunger = 70;
+      state.creatures.push(newC);
+      state.lastEvent = `Agent ${agent.agent_type} born as thronglet`;
+      state.lastEventTimer = 300;
+    }
+
+    if (alreadySynced && agent.stopped_at) {
+      // Agent finished → find its thronglet and resolve via split
+      const creature = state.creatures.find(c => c.id === agent.agent_id.slice(0, 7) && c.alive);
+      if (creature) {
+        creature.splitTimer = 999; // force split on next update
+        creature.eventLog = [...(creature.eventLog ?? []), `agent completed successfully`].slice(-10);
+      }
+    }
+  }
 }
 
 // ── MAIN ───────────────────────────────────────────────────
@@ -2134,10 +2384,20 @@ function main(): void {
     let lastTime = performance.now();
     let worldCheckTimer = 0;
     let interactionTimer = 0;
+    lastRenderedEpoch = state.epoch ?? 0;
 
     function loop(now: number): void {
-      const dt = Math.min((now - lastTime) / 16.67, 3);
+      const rawDt = Math.min((now - lastTime) / 16.67, 3);
       lastTime = now;
+
+      // Pause / speed control
+      if (state.paused) {
+        render(ctx, canvas, state.tick);
+        updateHUD();
+        requestAnimationFrame(loop);
+        return;
+      }
+      const dt = rawDt * state.simSpeed;
       state.tick++;
 
       // Update food physics
@@ -2174,6 +2434,12 @@ function main(): void {
       if (worldCheckTimer >= 60) {
         worldCheckTimer = 0;
         void checkWorldThresholds();
+
+        // Auto-update epoch based on population
+        const popForEpoch = state.creatures.filter(c => c.alive).length;
+        const newEpoch: 0 | 1 | 2 | 3 | 4 = popForEpoch < 5 ? 0 : popForEpoch < 10 ? 1 : popForEpoch < 20 ? 2 : popForEpoch < 35 ? 3 :
+          ((state.pollutionLevel ?? 0) > 8 ? 4 : 3);
+        if (newEpoch !== state.epoch) state.epoch = newEpoch;
 
         // 4:19 PM daily holistic evolution + petition (Apr 19 — birthday of this game)
         const evNow = new Date();
