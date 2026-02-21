@@ -734,61 +734,92 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
 
 
 def _draw_viz_graph(stdscr, y, x, h, w, cache, state, frame):
-    """Constellation Graph: force-directed 2D graph in braille with colored nodes."""
+    """Constellation Graph: force-directed 2D graph scoped to selected session."""
     active_all = cache.get("active_all", [])
     r_agents = cache.get("r_agents", [])
+    c_agents = cache.get("c_agents", [])
+    session_tools = cache.get("session_tools", {})
     tool_events = cache.get("tool_events", {})
+    rw = x + w
 
-    # Build nodes and edges
-    nodes = []  # (label, type, x, y)
+    # Pick session: selected, or first active
+    vis = state.get("visible_items", [])
+    sel = state.get("selected", -1)
+    sel_item = vis[sel] if 0 <= sel < len(vis) else None
+    target_sid = None
+    if sel_item:
+        target_sid = sel_item.get("session_id", "")
+    if not target_sid and active_all:
+        target_sid = active_all[0]["session_id"]
+    if not target_sid:
+        safe_add(stdscr, y + 1, x + 2, "select a session", rw, DIM)
+        return
+
+    # Build graph for this session
+    nodes = []  # {label, type, x, y}
     edges = []  # (from_idx, to_idx)
     node_map = {}
 
-    for s in active_all:
-        sid = s["session_id"]
-        idx = len(nodes)
-        node_map[sid] = idx
-        prompt = short_prompt(s.get("prompt", ""), 8) or sid[:6]
-        nodes.append({"label": prompt, "type": "session", "x": 0.0, "y": 0.0})
+    # Root: session
+    sess = next((s for s in active_all if s["session_id"] == target_sid), None)
+    prompt = short_prompt((sess or {}).get("prompt", ""), 10) or target_sid[:6]
+    node_map["session"] = 0
+    nodes.append({"label": prompt, "type": "session", "x": 0.5, "y": 0.15})
 
-    for a in r_agents:
+    # Agents under this session (running + recent completed)
+    children = [a for a in r_agents if a["session_id"] == target_sid]
+    completed = [a for a in c_agents if a["session_id"] == target_sid][:5]
+    for a in children + completed:
         aid = a["agent_id"]
-        idx = len(nodes)
-        node_map[aid] = idx
         atype = a["agent_type"] or "agent"
-        nodes.append({"label": atype[:8], "type": "agent", "x": 0.0, "y": 0.0})
-        if a["session_id"] in node_map:
-            edges.append((node_map[a["session_id"]], idx))
-
-    # Add tool nodes (unique per name per session)
-    for sid, tools in tool_events.items():
-        if sid not in node_map:
-            continue
-        seen = set()
-        for t in tools:
-            tname = t["tool_name"]
-            key = f"{sid}:{tname}"
-            if key in seen:
-                continue
-            seen.add(key)
+        key = f"agent:{aid}"
+        if key not in node_map:
             idx = len(nodes)
             node_map[key] = idx
-            nodes.append({"label": tname[:6], "type": "tool", "x": 0.0, "y": 0.0})
-            edges.append((node_map[sid], idx))
+            nodes.append({"label": atype[:10], "type": "agent", "x": 0.0, "y": 0.0})
+            edges.append((0, idx))  # session -> agent
 
-    if not nodes:
-        safe_add(stdscr, y + 1, x + 2, "no data for graph", w, DIM)
+    # Tools: from session_tools (extended list) or tool_events (recent)
+    tools_list = session_tools.get(target_sid, []) or tool_events.get(target_sid, [])
+    tool_counts = {}
+    for t in tools_list:
+        tname = t["tool_name"]
+        tool_counts[tname] = tool_counts.get(tname, 0) + 1
+
+    for tname, cnt in tool_counts.items():
+        key = f"tool:{tname}"
+        if key not in node_map:
+            idx = len(nodes)
+            node_map[key] = idx
+            label = TOOL_NAMES.get(tname, tname)[:10]
+            nodes.append({"label": f"{label}({cnt})", "type": "tool", "x": 0.0, "y": 0.0})
+            # Connect to agents that used this tool, or to session directly
+            connected = False
+            for a in children + completed:
+                a_tools = session_tools.get(a.get("session_id", ""), [])
+                if any(t["tool_name"] == tname for t in a_tools):
+                    akey = f"agent:{a['agent_id']}"
+                    if akey in node_map:
+                        edges.append((node_map[akey], idx))
+                        connected = True
+            if not connected:
+                edges.append((0, idx))  # fallback: connect to session
+
+    if len(nodes) < 2:
+        safe_add(stdscr, y + 1, x + 2, f"session {target_sid[:7]}: no agents or tools", rw, DIM)
         return
 
-    # Init positions (seeded layout)
+    # Init or restore positions (keyed by session)
     graph_state = state.setdefault("graph_state", {})
     n = len(nodes)
-    if graph_state.get("n") != n:
-        random.seed(42)
+    gs_key = f"{target_sid}:{n}"
+    if graph_state.get("key") != gs_key:
+        random.seed(hash(target_sid))
         for i, nd in enumerate(nodes):
-            nd["x"] = random.uniform(0.1, 0.9)
-            nd["y"] = random.uniform(0.1, 0.9)
-        graph_state["n"] = n
+            if nd["x"] == 0.0:
+                nd["x"] = random.uniform(0.15, 0.85)
+                nd["y"] = random.uniform(0.15, 0.85)
+        graph_state["key"] = gs_key
         graph_state["positions"] = [(nd["x"], nd["y"]) for nd in nodes]
         random.seed()
     else:
@@ -886,6 +917,15 @@ def _draw_viz_graph(stdscr, y, x, h, w, cache, state, frame):
             safe_add(stdscr, pr, cx_pos, chr(code), x + w - 1, color)
             cx_pos += 1
         pr += 1
+
+    # Node labels (rendered as text near each node)
+    type_text_colors = {"session": GREEN, "agent": MAGENTA, "tool": YELLOW}
+    for nd in nodes:
+        lx = x + 2 + int(nd["x"] * (char_w - 1)) + 1
+        ly = y + int(nd["y"] * (h - 2))
+        if y <= ly < y + h:
+            color = type_text_colors.get(nd["type"], DIM)
+            safe_add(stdscr, ly, lx, nd["label"][:12], x + w - 1, color)
 
     # Legend at bottom
     if pr < y + h:
