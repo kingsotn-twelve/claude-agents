@@ -8,6 +8,7 @@ Run in a separate pane: claude-agents
 import argparse
 import curses
 import glob
+import random
 import json
 import os
 import sqlite3
@@ -491,6 +492,52 @@ def sparkline(buckets, width=10):
         return BRAILLE[0] * width
     norm = [min(4, int(v / mx * 4.99)) if v > 0 else 0 for v in vals]
     return "".join(BRAILLE[norm[i] * 5 + norm[i + 1]] for i in range(0, n, 2))
+
+
+# ── GAME OF LIFE ─────────────────────────────────────────────
+
+def life_init(rows, cols, density=0.3):
+    """Random seed for Game of Life grid."""
+    return [[random.random() < density for _ in range(cols)] for _ in range(rows)]
+
+
+def life_step(grid, rows, cols):
+    """One generation of Conway's Game of Life (toroidal)."""
+    new = [[False] * cols for _ in range(rows)]
+    for r in range(rows):
+        for c in range(cols):
+            n = 0
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    if grid[(r + dr) % rows][(c + dc) % cols]:
+                        n += 1
+            if grid[r][c]:
+                new[r][c] = n in (2, 3)
+            else:
+                new[r][c] = n == 3
+    return new
+
+
+def life_render(grid, rows, cols, char_w, char_h):
+    """Render grid as braille strings. Each char = 2 wide × 4 tall dots."""
+    lines = []
+    for cy in range(char_h):
+        line = ""
+        for cx in range(char_w):
+            code = 0x2800
+            for dy in range(4):
+                for dx in range(2):
+                    gr, gc = cy * 4 + dy, cx * 2 + dx
+                    if gr < rows and gc < cols and grid[gr][gc]:
+                        if dx == 0:
+                            code |= 1 << [0, 1, 2, 6][dy]
+                        else:
+                            code |= 1 << [3, 4, 5, 7][dy]
+            line += chr(code)
+        lines.append(line)
+    return lines
 
 
 def _progress_bar(done, in_progress, total, width=5):
@@ -1272,6 +1319,55 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     col2 = tname.ljust(tname_w)
                     R(sr, rx + 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
                     sr += 1
+
+            # -- LIFE panel (below stats, if room) --
+            life_remaining = max_sr - sr - 1
+            if life_remaining >= 4 and active_all:
+                # Pick session: selected session, or first active
+                life_sid = None
+                if sel_agent and sel_agent.get("is_session"):
+                    life_sid = sel_agent["session_id"]
+                if not life_sid and active_all:
+                    life_sid = active_all[0]["session_id"]
+                if life_sid:
+                    sr += 1
+                    char_w = rw - 4
+                    char_h = life_remaining - 1
+                    grid_rows = char_h * 4
+                    grid_cols = char_w * 2
+                    # Init or step the life grid (stored in state per session)
+                    life_grids = state.setdefault("life_grids", {})
+                    if life_sid not in life_grids or life_grids[life_sid]["size"] != (grid_rows, grid_cols):
+                        # Seed from session prompt hash
+                        sess_info = session_lookup.get(life_sid, {})
+                        seed_str = (sess_info.get("prompt", "") or "") + life_sid
+                        random.seed(hash(seed_str))
+                        life_grids[life_sid] = {
+                            "grid": life_init(grid_rows, grid_cols, 0.25),
+                            "size": (grid_rows, grid_cols),
+                            "gen": 0,
+                        }
+                        random.seed()  # restore entropy
+                    lg = life_grids[life_sid]
+                    # Step every 3 frames (~600ms)
+                    if frame % 3 == 0:
+                        lg["grid"] = life_step(lg["grid"], grid_rows, grid_cols)
+                        lg["gen"] += 1
+                        # Re-seed if stale (< 5 alive cells)
+                        alive = sum(sum(row) for row in lg["grid"])
+                        if alive < 5:
+                            sess_info = session_lookup.get(life_sid, {})
+                            seed_str = (sess_info.get("prompt", "") or "") + life_sid + str(lg["gen"])
+                            random.seed(hash(seed_str))
+                            lg["grid"] = life_init(grid_rows, grid_cols, 0.25)
+                            random.seed()
+                    # Render
+                    lines = life_render(lg["grid"], grid_rows, grid_cols, char_w, char_h)
+                    for line in lines:
+                        if sr >= max_sr:
+                            break
+                        R(sr, rx + 2, line, DIM)
+                        sr += 1
 
     # -- Footer (full width) --
     status = state.get("status_msg", "")
