@@ -1697,9 +1697,34 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
                 if kind == "agent":
                     time_filter = f"AND started_at > datetime('now', '{sql_interval}')" if sql_interval else ""
                     cwd_filter = f"AND cwd = '{cwd}'" if cwd else ""
-                    stat_cache["data"] = {"rows": [dict(r) for r in conn.execute(
-                        f"SELECT agent_id, agent_type, cwd, started_at, stopped_at FROM agent WHERE agent_type = ? {time_filter} {cwd_filter} ORDER BY started_at DESC LIMIT 8",
-                        (atype,)).fetchall()]}
+                    rows = [dict(r) for r in conn.execute(
+                        f"SELECT agent_id, agent_type, cwd, started_at, stopped_at FROM agent WHERE agent_type = ? {time_filter} {cwd_filter} ORDER BY started_at DESC LIMIT 20",
+                        (atype,)).fetchall()]
+                    # Compute biography stats
+                    total = len(rows)
+                    durs = []
+                    successes = 0
+                    for r in rows:
+                        if r.get("stopped_at") and r.get("started_at"):
+                            try:
+                                s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
+                                e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
+                                d = (e - s).total_seconds()
+                                durs.append(d)
+                                # Success heuristic: completed in 5s-600s
+                                if 5 < d < 600:
+                                    successes += 1
+                            except Exception:
+                                pass
+                    avg_dur = int(sum(durs) / len(durs)) if durs else 0
+                    success_pct = int(successes / total * 100) if total > 0 else 0
+                    stat_cache["data"] = {
+                        "rows": rows[:10],
+                        "total": total,
+                        "avg_dur": avg_dur,
+                        "success_pct": success_pct,
+                        "successes": successes,
+                    }
                 elif kind == "tool":
                     time_filter = f"AND te.created_at > datetime('now', '{sql_interval}')" if sql_interval else ""
                     cwd_filter = f"AND p.cwd = '{cwd}'" if cwd else ""
@@ -1717,34 +1742,49 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
         sd = stat_cache.get("data")
         if sd and kind == "agent":
             rows = sd.get("rows", [])
+            total = sd.get("total", 0)
+            avg_dur = sd.get("avg_dur", 0)
+            success_pct = sd.get("success_pct", 0)
+            # Biography summary line
+            if avg_dur > 0:
+                dur_str = f"{avg_dur // 60}m{avg_dur % 60:02d}s" if avg_dur >= 60 else f"{avg_dur}s"
+            else:
+                dur_str = "?"
+            pct_color = GREEN if success_pct >= 80 else (YELLOW if success_pct >= 50 else RED)
+            P(pr, col, f"{total} runs", WHITE)
+            P(pr, col + len(f"{total} runs"), f" · ", DIM)
+            pct_text = f"{success_pct}% success"
+            P(pr, col + len(f"{total} runs · "), pct_text, pct_color)
+            P(pr, col + len(f"{total} runs · {pct_text}"), f" · avg {dur_str}", DIM)
+            pr += 2
             if rows:
-                durs = []
-                for r in rows:
-                    if r.get("stopped_at") and r.get("started_at"):
-                        try:
-                            s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
-                            e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
-                            durs.append((e - s).total_seconds())
-                        except Exception:
-                            pass
-                if durs:
-                    avg = int(sum(durs) / len(durs))
-                    P(pr, col, f"avg duration: {avg}s", DIM)
-                    pr += 1
-                pr += 1
-                P(pr, col, "RECENT RUNS", CYAN)
+                P(pr, col, "RECENT", CYAN)
                 pr += 1
                 for r in rows:
                     if pr >= max_row_virtual:
                         break
-                    aid = short_id(r["agent_id"])
                     dur = fmt_dur(r["started_at"], r.get("stopped_at")) if r.get("stopped_at") else fmt_dur(r["started_at"])
                     ts = fmt_time(r["started_at"])
-                    running = "\u25cf" if not r.get("stopped_at") else "\u25cb"
-                    P(pr, col, f"{running} {ts}  {dur:>6}  {aid}", DIM)
+                    tag = dir_tag(r.get("cwd", ""))
+                    # Success/fail indicator
+                    if not r.get("stopped_at"):
+                        icon, ic = "●", GREEN  # running
+                    else:
+                        try:
+                            s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
+                            e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
+                            d = (e - s).total_seconds()
+                            if 5 < d < 600:
+                                icon, ic = "✓", GREEN
+                            else:
+                                icon, ic = "✗", RED
+                        except Exception:
+                            icon, ic = "○", DIM
+                    P(pr, col, f"{icon}", ic)
+                    P(pr, col + 2, f"{ts}  {dur:>6}  {tag}", DIM)
                     pr += 1
             else:
-                P(pr, col, "(no recent runs)", DIM)
+                P(pr, col, "(no runs)", DIM)
         elif sd and kind == "tool":
             label_rows = sd.get("labels", [])
             if label_rows:
