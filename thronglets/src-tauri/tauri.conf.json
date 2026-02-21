@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/examples/tauri/src-tauri/tauri.conf.json",
   "productName": "Thronglets",
   "version": "0.1.0",
   "identifier": "com.claude-agents.thronglets",
@@ -10,7 +9,6 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "title": "Thronglets",
     "windows": [
       {
         "title": "Thronglets",
@@ -27,12 +25,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
+    "icon": []
   }
 }
