@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -1391,7 +1391,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 grid_rows = char_h * 4
                 grid_cols = char_w * 2
                 life_grids = state.setdefault("life_grids", {})
-                if life_sid not in life_grids or life_grids[life_sid]["size"] != (grid_rows, grid_cols):
+                if life_sid not in life_grids:
                     sess_info = session_lookup.get(life_sid, {})
                     seed_str = (sess_info.get("prompt", "") or "") + life_sid
                     random.seed(hash(seed_str))
@@ -1401,6 +1401,16 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                         "gen": 0,
                     }
                     random.seed()
+                elif life_grids[life_sid]["size"] != (grid_rows, grid_cols):
+                    # Resize: crop or extend existing grid (no re-seed)
+                    old_grid = life_grids[life_sid]["grid"]
+                    old_r, old_c = life_grids[life_sid]["size"]
+                    new_grid = [[False] * grid_cols for _ in range(grid_rows)]
+                    for r in range(min(old_r, grid_rows)):
+                        for c in range(min(old_c, grid_cols)):
+                            new_grid[r][c] = old_grid[r][c]
+                    life_grids[life_sid]["grid"] = new_grid
+                    life_grids[life_sid]["size"] = (grid_rows, grid_cols)
                 lg = life_grids[life_sid]
                 for _ in range(5):  # 5 steps per frame = ~50 gen/s
                     lg["grid"] = life_step(lg["grid"], grid_rows, grid_cols)

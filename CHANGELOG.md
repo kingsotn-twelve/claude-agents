@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.7.0 — Feb 20, 2026
+
+### DETAIL panel navigation
+
+Press `l` on a selected item to focus the DETAIL panel. `j`/`k` then scrolls through tool events, task lists, and transcript content. `h` or `Esc` returns to the left panel. The focused panel highlights with a cyan border and `▶ DETAIL` indicator.
+
+### Session tool timeline in DETAIL
+
+Selecting a session shows its recent tool calls (including MCP) with timestamps. Scroll through them with `l` then `j`/`k`.
+
+### Stats time ranges
+
+`h`/`l` when nothing is selected cycles STATS through 1h, 1d, 7d, 30d, and all. Active range shows as `[7d]` in the panel title.
+
+### Game of Life improvements
+
+50 gen/s with optimized step function. Resizing the terminal no longer resets the simulation — the grid crops/extends to fit. `--game-of-life` flag to enable, welcome screen on first launch.
+
+---
+
 ## v0.6.1 — Feb 20, 2026
 
 ### Game of Life fixes
