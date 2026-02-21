@@ -32,12 +32,17 @@ SYMBOLS = {"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": 
 BRAILLE = "⠀⠂⠄⠆⠈⠐⠒⠔⠖⠘⠠⠢⠤⠦⠨⠰⠲⠴⠶⠸⡀⡂⡄⡆⡈"
 
 GREEN = CYAN = YELLOW = DIM = MAGENTA = WHITE = RED = 0
+# Selection highlight variants (white-on-dark-gray)
+SEL = SEL_DIM = SEL_CYAN = SEL_YELLOW = SEL_GREEN = SEL_MAGENTA = 0
+BG_SEL = 236  # dark gray background
 
 
 def init_colors():
     global GREEN, CYAN, YELLOW, DIM, MAGENTA, WHITE, RED
+    global SEL, SEL_DIM, SEL_CYAN, SEL_YELLOW, SEL_GREEN, SEL_MAGENTA, BG_SEL
     curses.start_color()
     curses.use_default_colors()
+    # Normal colors (pair 1-7)
     for i, c in enumerate([curses.COLOR_GREEN, curses.COLOR_WHITE, curses.COLOR_CYAN,
                            curses.COLOR_YELLOW, 8, curses.COLOR_MAGENTA, curses.COLOR_RED], 1):
         curses.init_pair(i, c, -1)
@@ -48,6 +53,28 @@ def init_colors():
     DIM = curses.color_pair(5)
     MAGENTA = curses.color_pair(6) | curses.A_BOLD
     RED = curses.color_pair(7) | curses.A_BOLD
+    # Selection highlight colors (pair 11-16: foreground on dark gray)
+    try:
+        curses.init_pair(11, curses.COLOR_WHITE, BG_SEL)
+        curses.init_pair(12, 8, BG_SEL)  # dim on dark gray
+        curses.init_pair(13, curses.COLOR_CYAN, BG_SEL)
+        curses.init_pair(14, curses.COLOR_YELLOW, BG_SEL)
+        curses.init_pair(15, curses.COLOR_GREEN, BG_SEL)
+        curses.init_pair(16, curses.COLOR_MAGENTA, BG_SEL)
+        SEL = curses.color_pair(11) | curses.A_BOLD
+        SEL_DIM = curses.color_pair(12)
+        SEL_CYAN = curses.color_pair(13) | curses.A_BOLD
+        SEL_YELLOW = curses.color_pair(14) | curses.A_BOLD
+        SEL_GREEN = curses.color_pair(15) | curses.A_BOLD
+        SEL_MAGENTA = curses.color_pair(16) | curses.A_BOLD
+    except curses.error:
+        # Fallback if terminal doesn't support 256 colors
+        SEL = curses.A_REVERSE | curses.A_BOLD
+        SEL_DIM = curses.A_REVERSE
+        SEL_CYAN = curses.A_REVERSE | curses.A_BOLD
+        SEL_YELLOW = curses.A_REVERSE | curses.A_BOLD
+        SEL_GREEN = curses.A_REVERSE | curses.A_BOLD
+        SEL_MAGENTA = curses.A_REVERSE | curses.A_BOLD
 
 
 # ── DATA QUERIES ─────────────────────────────────────────────
@@ -416,73 +443,6 @@ end tell"""
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return f"iTerm2: {r.stderr.strip()[:60]}" if r.returncode != 0 else ""
 
-
-def focus_session_in_iterm2(cwd: str) -> str:
-    """Find and focus the iTerm2 pane running claude with matching cwd."""
-    if not cwd:
-        return "no cwd for session"
-    target = cwd.rstrip("/")
-
-    # Step 1: Find claude processes, match cwd, get tty
-    target_tty = None
-    try:
-        ps_out = subprocess.run(
-            ["ps", "-eo", "pid,tty,command"], capture_output=True, text=True
-        ).stdout
-        for line in ps_out.splitlines():
-            parts = line.split(None, 2)
-            if len(parts) < 3:
-                continue
-            cmd = parts[2]
-            # Match "claude" binary but not "claude-agents" or "claude-monitor"
-            if "claude-agent" in cmd or "claude-monitor" in cmd:
-                continue
-            if "claude" not in cmd:
-                continue
-            pid, tty = parts[0], parts[1]
-            if tty == "??" or not tty.startswith("tty"):
-                continue
-            # Check this process's cwd via lsof
-            try:
-                lsof = subprocess.run(
-                    ["lsof", "-p", pid, "-d", "cwd", "-Fn"],
-                    capture_output=True, text=True, timeout=2
-                ).stdout
-                for lsof_line in lsof.splitlines():
-                    if lsof_line.startswith("n") and lsof_line[1:].rstrip("/") == target:
-                        target_tty = f"/dev/{tty}"
-                        break
-            except Exception:
-                pass
-            if target_tty:
-                break
-    except Exception:
-        pass
-
-    if not target_tty:
-        return "no matching claude process found"
-
-    # Step 2: Focus the iTerm2 session with that tty
-    script = f"""tell application "iTerm2"
-  repeat with w in windows
-    tell w
-      repeat with t in tabs
-        repeat with s in sessions of t
-          if tty of s is "{target_tty}" then
-            select t
-            activate
-            return "ok"
-          end if
-        end repeat
-      end repeat
-    end tell
-  end repeat
-  return "not found"
-end tell"""
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    if "ok" in (r.stdout + r.stderr):
-        return ""
-    return "iTerm2 pane not found for tty"
 
 
 def fmt_dur(start_str: str, end_str: str | None = None) -> str:
@@ -1044,15 +1004,15 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
                 if is_sel:
                     try:
-                        stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
+                        stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                     except curses.error:
                         pass
-                    L(tr, base, connector, DIM | curses.A_REVERSE)
-                    L(tr, base + 3, "\u25b6", YELLOW | curses.A_REVERSE)
-                    L(tr, base + 5, f"{dur:>5}", YELLOW | curses.A_REVERSE)
-                    L(tr, base + 11, sid_short, DIM | curses.A_REVERSE)
-                    L(tr, base + 18, teammate_name, curses.A_REVERSE | curses.A_BOLD)
-                    L(tr, lw - 12, spark, DIM | curses.A_REVERSE)
+                    L(tr, base, connector, SEL_DIM)
+                    L(tr, base + 3, "\u25b6", SEL_YELLOW)
+                    L(tr, base + 5, f"{dur:>5}", SEL_YELLOW)
+                    L(tr, base + 11, sid_short, SEL_DIM)
+                    L(tr, base + 18, teammate_name, SEL)
+                    L(tr, lw - 12, spark, SEL_DIM)
                 else:
                     L(tr, base, connector, DIM)
                     L(tr, base + 3, s_icon, s_color)
@@ -1074,12 +1034,12 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     task_text = task_text[:lw - base - 10]
                     if is_sel:
                         try:
-                            stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
+                            stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                         except curses.error:
                             pass
-                        L(tr, base, continuation, DIM | curses.A_REVERSE)
-                        L(tr, base + 5, "\u25cf", YELLOW | curses.A_REVERSE)
-                        L(tr, base + 7, task_text, YELLOW | curses.A_REVERSE)
+                        L(tr, base, continuation, SEL_DIM)
+                        L(tr, base + 5, "\u25cf", SEL_YELLOW)
+                        L(tr, base + 7, task_text, SEL_YELLOW)
                     else:
                         L(tr, base, continuation, DIM)
                         L(tr, base + 5, "\u25cf", YELLOW)
@@ -1096,13 +1056,21 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             if fr >= cr + live_h - 1:
                 break
             ts = fmt_time(ev.get("created_at"))
-            sid_short = short_session(ev["session_id"])
+            sid = ev["session_id"]
+            # Show [dirname] from the session's cwd for context
+            sess_info = session_lookup.get(sid, {})
+            tag = dir_tag(sess_info.get("cwd", ""))
             name = ev["tool_name"]
             label = ev["tool_label"]
             tool_str = f"{name}\u2192{label}" if label and label != name else name
             L(fr, 2, ts, DIM)
-            L(fr, 11, sid_short, DIM)
-            L(fr, 18, tool_str[:lw - 20], YELLOW)
+            if tag:
+                L(fr, 11, tag, CYAN)
+                L(fr, 11 + len(tag) + 1, tool_str[:lw - 14 - len(tag)], YELLOW)
+            else:
+                sid_short = short_session(sid)
+                L(fr, 11, sid_short, DIM)
+                L(fr, 18, tool_str[:lw - 20], YELLOW)
             fr += 1
         cr += live_h
 
@@ -1151,15 +1119,15 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
             if is_sel:
                 try:
-                    stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
+                    stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                 except curses.error:
                     pass
-                L(sr, 2, "\u25b6", YELLOW | curses.A_REVERSE)
+                L(sr, 2, "\u25b6", SEL_YELLOW)
                 run_dur = fmt_dur(s["created_at"])
-                L(sr, 4, f"{run_dur:>6}", YELLOW | curses.A_REVERSE)
-                L(sr, 11, sid_short, DIM | curses.A_REVERSE)
-                L(sr, 18, prompt, curses.A_REVERSE | curses.A_BOLD)
-                L(sr, lw - 12, spark, DIM | curses.A_REVERSE)
+                L(sr, 4, f"{run_dur:>6}", SEL_YELLOW)
+                L(sr, 11, sid_short, SEL_DIM)
+                L(sr, 18, prompt, SEL)
+                L(sr, lw - 12, spark, SEL_DIM)
             elif waiting:
                 wait_dur = fmt_dur(s["lastWaitUserAt"])
                 L(sr, 2, "\u25cb", YELLOW)
@@ -1189,18 +1157,18 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
             if is_sel:
                 try:
-                    stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
+                    stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
                 except curses.error:
                     pass
-                L(sr, 2, "\u25b6", YELLOW | curses.A_REVERSE)
-                L(sr, 4, f"{dur:>6}", YELLOW | curses.A_REVERSE)
+                L(sr, 2, "\u25b6", SEL_YELLOW)
+                L(sr, 4, f"{dur:>6}", SEL_YELLOW)
                 col = 11
                 if tag:
-                    L(sr, col, tag, CYAN | curses.A_REVERSE)
+                    L(sr, col, tag, SEL_CYAN)
                     col += len(tag) + 1
-                L(sr, col, atype, curses.A_REVERSE | curses.A_BOLD)
-                L(sr, col + len(atype) + 1, short_id(a["agent_id"]), curses.A_REVERSE)
-                L(sr, lw - 12, a_spark, DIM | curses.A_REVERSE)
+                L(sr, col, atype, SEL)
+                L(sr, col + len(atype) + 1, short_id(a["agent_id"]), SEL_DIM)
+                L(sr, lw - 12, a_spark, SEL_DIM)
             else:
                 L(sr, 2, sc, MAGENTA)
                 L(sr, 4, f"{dur:>6}", YELLOW)
@@ -1331,23 +1299,19 @@ def main(stdscr):
             agents = state["visible_items"]
             if 0 <= idx < len(agents):
                 item = agents[idx]
-                short = item["agent_id"][:7]
-                # Temporarily restore terminal for subprocess calls
-                curses.def_prog_mode()
-                curses.endwin()
-                try:
-                    if item.get("is_session") or item.get("is_teammate"):
-                        err = focus_session_in_iterm2(item.get("cwd", ""))
-                        label = item.get("teammate_name") or "session"
-                        state["status_msg"] = err if err else f"focused: {label}-{short}"
-                    else:
+                # Only agents have transcripts to open
+                if not item.get("is_session") and not item.get("is_teammate"):
+                    short = item["agent_id"][:7]
+                    curses.def_prog_mode()
+                    curses.endwin()
+                    try:
                         err = open_agent_in_iterm2(item)
                         atype = (item.get("agent_type") or "agent")[:12]
                         state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
-                finally:
-                    stdscr.refresh()
-                    curses.reset_prog_mode()
-                state["status_until"] = time.time() + 3
+                    finally:
+                        stdscr.refresh()
+                        curses.reset_prog_mode()
+                    state["status_until"] = time.time() + 3
 
 
 def self_update():
