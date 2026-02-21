@@ -306,7 +306,7 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
   for (let wy = 0; wy < WORLD_H; wy++) {
     for (let wx = 0; wx < WORLD_W; wx++) {
       const { x: sx, y: sy } = worldToScreen(wx, wy);
-      if (sx < -TILE_W || sx > w + TILE_W || sy < -TILE_H || sy > h + TILE_H) continue;
+      if (sx < -TILE_W * 2 || sx > w + TILE_W * 2 || sy < -TILE_H * 2 || sy > h + TILE_H * 2) continue;
       drawIsoDiamond(ctx, sx, sy, COLORS.grass[(wx * 7 + wy * 13) % 4]);
       ctx.strokeStyle = 'rgba(0,0,0,0.1)';
       ctx.lineWidth = 0.5;
@@ -514,9 +514,21 @@ function main(): void {
   resize();
   window.addEventListener('resize', resize);
 
-  drawBootScreen(ctx, canvas, () => {
+  // Click or press any key to skip boot screen
+  let booting = true;
+  const skipBoot = () => {
+    if (!booting) return;
+    booting = false;
     initWorld();
     setupInput(canvas);
+    startGame();
+  };
+  canvas.addEventListener('click', skipBoot, { once: true });
+  document.addEventListener('keydown', skipBoot, { once: true });
+
+  drawBootScreen(ctx, canvas, skipBoot);
+
+  function startGame() {
 
     let lastTime = performance.now();
 
@@ -539,7 +551,7 @@ function main(): void {
     }
 
     requestAnimationFrame(loop);
-  });
+  }
 }
 
 main();
