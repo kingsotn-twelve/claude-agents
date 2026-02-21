@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.7.2 — Feb 20, 2026
+
+### Stats drill-down
+
+Select any agent type or tool row in STATS and the DETAIL panel shows a drill-down: recent runs with durations for agents, top targets with bar charts and recent uses for tools. All scoped to the active time range.
+
+---
+
 ## v0.7.1 — Feb 20, 2026
 
 ### Vim-like panel navigation
