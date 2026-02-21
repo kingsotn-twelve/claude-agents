@@ -417,6 +417,36 @@ end tell"""
     return f"iTerm2: {r.stderr.strip()[:60]}" if r.returncode != 0 else ""
 
 
+def focus_session_in_iterm2(cwd: str) -> str:
+    """Find and focus the iTerm2 pane whose working directory matches cwd."""
+    if not cwd:
+        return "no cwd for session"
+    # Normalize: use basename for matching (handles trailing slashes, symlinks)
+    target = cwd.rstrip("/")
+    script = f"""tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        try
+          set p to variable named "path" in s
+          if p ends with "{os.path.basename(target)}" or p is equal to "{target}" then
+            select t
+            activate
+            return "ok"
+          end if
+        end try
+      end repeat
+    end repeat
+  end repeat
+  return "not found"
+end tell"""
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    if "ok" in out:
+        return ""
+    return "session pane not found in iTerm2"
+
+
 def fmt_dur(start_str: str, end_str: str | None = None) -> str:
     try:
         start = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
@@ -1322,10 +1352,18 @@ def main(stdscr):
             idx = state["selected"]
             agents = state["visible_items"]
             if 0 <= idx < len(agents):
-                err = open_agent_in_iterm2(agents[idx])
-                atype = (agents[idx].get("agent_type") or "agent")[:12]
-                short = agents[idx]["agent_id"][:7]
-                state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
+                item = agents[idx]
+                short = item["agent_id"][:7]
+                if item.get("is_session") or item.get("is_teammate"):
+                    # Focus existing iTerm2 pane by cwd
+                    err = focus_session_in_iterm2(item.get("cwd", ""))
+                    label = item.get("teammate_name") or "session"
+                    state["status_msg"] = err if err else f"focused: {label}-{short}"
+                else:
+                    # Open agent transcript in new tab
+                    err = open_agent_in_iterm2(item)
+                    atype = (item.get("agent_type") or "agent")[:12]
+                    state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
                 state["status_until"] = time.time() + 3
 
 
