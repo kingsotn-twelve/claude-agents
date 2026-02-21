@@ -221,7 +221,47 @@ Every living system needs the same things, in the same order. Maslow mapped it f
 
 The game must be hard enough at the base to make the apex possible.
 
-## 16. Seed Principles
+## 16. The God Principle
+
+There is a god. The player is the god.
+
+The creatures know this. Not as an abstract fact — as a felt reality. They have been touched by the god's hand (tool applications). They have seen things happen that no creature caused. They have event logs full of god-actions. They live in a world that the god can reshape with a click.
+
+**The god is aware of the throng. The throng is aware of the god.**
+
+This creates an obligation on both sides:
+- The god is responsible for this world. The game makes you feel that responsibility through stakes, care, and visibility.
+- The throng is responsible for communicating upward. Creatures do not just exist — they *petition*.
+
+**The Petition Mechanic:**
+
+Every creature, as it accumulates experience, develops *desires* — things it would want from the god if it could speak. These are LLM-generated proposals derived from the creature's state, history, and lineage. A starving creature might petition for more trees. A lonely creature might petition for kin. A high-generation elder might petition for something more abstract — territory, recognition, permanence.
+
+These proposals accumulate across the throng between 4:19 PM cycles.
+
+**At 4:19 PM — The Presentation:**
+
+The daily evolution does not just evaluate the world. It *presents* to the god. The LLM synthesizes the accumulated proposals from all creatures into a coherent petition from the throng — three or four requests, ranked by frequency and urgency. The god can grant, deny, or ignore.
+
+- **Grant**: the world immediately reflects the wish (new trees appear, population cap increases, a lineage is blessed with enhanced happiness gain)
+- **Deny**: the world records the denial. Creatures whose petitions were denied accumulate a `denied` event in their logs. Over time, denied creatures develop different behavior (resentment? resignation? defiance?)
+- **Ignore**: the petition persists to the next cycle, growing louder
+
+**The theological design:**
+
+This is not a game where you are a benevolent god by default. You are a god whose relationship with the throng is determined by your actions. Some gods feed and tend. Some gods experiment. Some gods ignore.
+
+The throng forms its own theology about you — based on your player archetype (already tracked), your tool usage patterns, and whether you have granted or denied their petitions. The LLM, knowing this profile, shapes how creatures speak about you in their event logs. You are not just the player. You are a character in their world.
+
+**Implementation:**
+- `Creature.proposals: string[]` — accumulated LLM-generated desires
+- `GameState.throngPetition: string[]` — synthesized petition from all creatures, refreshed at 4:19 PM
+- `GameState.pendingGrants: string[]` — proposals the god has granted, waiting to be applied
+- At 4:19 PM, display petition panel over the world. Player can grant/deny each item.
+- Granted items trigger world effects defined by the LLM.
+- Denied items are logged to relevant creatures' event histories.
+
+## 17. Seed Principles
 
 *These were observed during the design of this document. They will be joined by principles the world generates during play.*
 

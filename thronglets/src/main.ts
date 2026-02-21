@@ -40,6 +40,8 @@ interface Creature {
   playerProfile?: string[];
   evolutionGeneration?: number;
   lineage?: string;
+  proposals?: string[];   // desires the creature wants to petition the god for
+  deniedCount?: number;   // how many petitions have been denied
 }
 
 interface FoodItem {
@@ -115,6 +117,11 @@ interface GameState {
   };
   // Interaction cooldowns: `${id1}:${id2}` → lastFiredTick
   interactionCooldowns: Map<string, number>;
+  // God/petition system
+  throngPetition: Array<{ text: string; urgency: number; lineage: string }>;
+  petitionVisible: boolean;
+  pendingGrants: string[];
+  godRelationship: 'unknown' | 'benevolent' | 'capricious' | 'absent' | 'feared';
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -196,6 +203,10 @@ const state: GameState = {
     outputAge: 999,
   },
   interactionCooldowns: new Map(),
+  throngPetition: [],
+  petitionVisible: false,
+  pendingGrants: [],
+  godRelationship: 'unknown',
 };
 
 // Feature 2: Player action tracking
@@ -868,6 +879,142 @@ async function checkWorldThresholds(): Promise<void> {
 // ── 4:19 PM DAILY EVOLUTION ────────────────────────────────
 
 let lastEvolutionDate = '';  // tracks the date of the last holistic evolution
+
+// ── GOD / PETITION SYSTEM ─────────────────────────────────
+
+async function generateCreatureProposal(creature: Creature): Promise<void> {
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) return;
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 80,
+        system: `A digital creature in a god-game knows there is a god (the player). Generate ONE specific desire or petition the creature would send to the god. Base it on the creature's state. 10-15 words. Present tense. First-person. No metaphor. Examples: "I want more apple trees near my territory", "please stop the purple goo from spreading", "I want to meet others of my lineage"`,
+        messages: [{ role: 'user', content: `hunger=${Math.round(creature.hunger)} happiness=${Math.round(creature.happiness)} gen=${creature.evolutionGeneration ?? 0} lineage=${creature.lineage} epoch=${epochName(state.epoch ?? 0)} events=${creature.eventLog?.slice(-2).join(';') ?? 'none'} denials=${creature.deniedCount ?? 0}` }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const proposal = data.content?.[0]?.text?.trim() ?? '';
+    if (proposal) {
+      creature.proposals = [...(creature.proposals ?? []), proposal].slice(-3);
+    }
+  } catch { /* silent */ }
+}
+
+async function synthesizePetition(): Promise<void> {
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  const alive = state.creatures.filter(c => c.alive);
+
+  // Collect all proposals
+  const allProposals = alive.flatMap(c => c.proposals ?? []);
+  if (allProposals.length === 0) {
+    // Fallback: generate basic petition from world state
+    state.throngPetition = [
+      { text: 'We need more food trees — we are starving', urgency: 9, lineage: 'all' },
+      { text: 'We wish to grow in numbers without penalty', urgency: 6, lineage: 'all' },
+    ];
+    state.petitionVisible = true;
+    return;
+  }
+
+  if (!apiKey) {
+    // Use raw proposals if no API key
+    state.throngPetition = allProposals.slice(0, 4).map((text, i) => ({
+      text, urgency: 8 - i * 2, lineage: alive[i]?.lineage ?? 'unknown'
+    }));
+    state.petitionVisible = true;
+    return;
+  }
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        system: `Synthesize creature proposals into a formal petition to the god-player. Return JSON only:
+[{"text": "specific request", "urgency": 1-10, "lineage": "all|lineage_prefix"},...]
+Maximum 4 items. Merge similar requests. Rank by urgency. Keep each request concrete and actionable.`,
+        messages: [{ role: 'user', content: `All proposals:\n${allProposals.join('\n')}\n\nPopulation: ${alive.length} | Epoch: ${epochName(state.epoch ?? 0)} | God relationship: ${state.godRelationship}` }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const parsed = JSON.parse(data.content?.[0]?.text?.trim() ?? '[]') as Array<{ text: string; urgency: number; lineage: string }>;
+    state.throngPetition = parsed.slice(0, 4);
+    state.petitionVisible = true;
+  } catch {
+    state.throngPetition = allProposals.slice(0, 3).map((text, i) => ({
+      text, urgency: 8 - i, lineage: 'all'
+    }));
+    state.petitionVisible = true;
+  }
+}
+
+function grantPetition(idx: number): void {
+  const petition = state.throngPetition[idx];
+  if (!petition) return;
+  const text = petition.text.toLowerCase();
+
+  // Apply tangible world effects based on content
+  if (text.includes('tree') || text.includes('food') || text.includes('apple')) {
+    // Spawn 3 new trees
+    for (let i = 0; i < 3; i++) {
+      state.trees.push({
+        x: 2 + Math.random() * (WORLD_W - 4),
+        y: 2 + Math.random() * (WORLD_H - 4),
+        type: 'apple', health: 3, regrowTimer: 0
+      });
+    }
+    state.lastEvent = 'God granted: three new trees grow from the earth';
+  } else if (text.includes('pollution') || text.includes('goo') || text.includes('purple')) {
+    state.pollutionLevel = Math.max(0, (state.pollutionLevel ?? 0) - 2);
+    state.lastEvent = 'God granted: the purple goo recedes';
+  } else if (text.includes('happy') || text.includes('joy') || text.includes('play')) {
+    state.creatures.filter(c => c.alive).forEach(c => {
+      c.happiness = Math.min(100, c.happiness + 15);
+    });
+    state.lastEvent = 'God granted: a wave of joy passes through the throng';
+  } else {
+    // Generic blessing
+    state.creatures.filter(c => c.alive).forEach(c => {
+      c.happiness = Math.min(100, c.happiness + 8);
+      c.hunger = Math.min(100, c.hunger + 10);
+    });
+    state.lastEvent = `God granted: "${petition.text.slice(0, 40)}"`;
+  }
+
+  state.lastEventTimer = 400;
+  state.pendingGrants.push(petition.text);
+  state.throngPetition.splice(idx, 1);
+
+  // Update god relationship
+  const grants = state.pendingGrants.length;
+  state.godRelationship = grants > 5 ? 'benevolent' : grants > 2 ? 'capricious' : 'unknown';
+  state.observedPrinciples.unshift(`God granted: ${petition.text.slice(0, 40)}`);
+}
+
+function denyPetition(idx: number): void {
+  const petition = state.throngPetition[idx];
+  if (!petition) return;
+
+  // Log denial to matching creatures
+  state.creatures.filter(c => c.alive).forEach(c => {
+    if (petition.lineage === 'all' || (c.lineage ?? '').startsWith(petition.lineage)) {
+      c.deniedCount = (c.deniedCount ?? 0) + 1;
+      c.eventLog = [...(c.eventLog ?? []), `petition denied: "${petition.text.slice(0, 30)}"`].slice(-10);
+      c.happiness = Math.max(0, c.happiness - 5);
+    }
+  });
+
+  state.lastEvent = `God denied: "${petition.text.slice(0, 35)}"`;
+  state.lastEventTimer = 300;
+  state.throngPetition.splice(idx, 1);
+  state.godRelationship = 'capricious';
+}
 
 async function runHolisticEvolution(): Promise<void> {
   const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
@@ -1597,6 +1744,76 @@ function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, tick: 
 
   // Observer panel — drawn last, always on top
   drawObserver(ctx, w, h);
+  if (state.petitionVisible && state.throngPetition.length > 0) {
+    drawPetitionPanel(ctx, w, h);
+  }
+}
+
+function drawPetitionPanel(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const pw = 360, ph = 180 + state.throngPetition.length * 38;
+  const px = Math.floor(w / 2 - pw / 2);
+  const py = Math.floor(h / 2 - ph / 2);
+
+  // Backdrop
+  ctx.fillStyle = 'rgba(4, 6, 18, 0.95)';
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = '#8833aa';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Header
+  ctx.fillStyle = 'rgba(136, 51, 170, 0.3)';
+  ctx.fillRect(px, py, pw, 32);
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillStyle = '#cc88ff';
+  ctx.fillText('THE THRONG PETITIONS THE GOD', px + 12, py + 20);
+
+  ctx.font = '7px "Press Start 2P", monospace';
+  ctx.fillStyle = '#667799';
+  ctx.fillText(`[ ${state.creatures.filter(c => c.alive).length} voices · ${epochName(state.epoch ?? 0)} epoch · god is ${state.godRelationship} ]`, px + 12, py + 44);
+
+  // Petition items
+  state.throngPetition.forEach((p, i) => {
+    const iy = py + 58 + i * 38;
+    const urgencyColor = p.urgency >= 8 ? '#ff6644' : p.urgency >= 5 ? '#ffaa44' : '#aabbcc';
+
+    // Urgency bar
+    ctx.fillStyle = urgencyColor;
+    ctx.fillRect(px + 8, iy, 4, 28);
+
+    // Text
+    ctx.font = '7px "Press Start 2P", monospace';
+    ctx.fillStyle = '#ddeeff';
+    const words = p.text.split(' ');
+    let line = '', line2 = '';
+    for (const w of words) {
+      if ((line + w).length < 40) line += (line ? ' ' : '') + w;
+      else line2 += (line2 ? ' ' : '') + w;
+    }
+    ctx.fillText(line, px + 20, iy + 12);
+    if (line2) { ctx.fillStyle = '#99aabb'; ctx.fillText(line2, px + 20, iy + 24); }
+
+    // Grant / Deny buttons
+    const btnW = 44, btnH = 16;
+    const grantX = px + pw - 104, denyX = px + pw - 54;
+    const btnY = iy + 6;
+
+    ctx.fillStyle = '#224422';
+    ctx.fillRect(grantX, btnY, btnW, btnH);
+    ctx.fillStyle = '#442222';
+    ctx.fillRect(denyX, btnY, btnW, btnH);
+
+    ctx.font = '6px "Press Start 2P", monospace';
+    ctx.fillStyle = '#44ff88';
+    ctx.fillText('GRANT', grantX + 6, btnY + 10);
+    ctx.fillStyle = '#ff4444';
+    ctx.fillText('DENY', denyX + 8, btnY + 10);
+  });
+
+  // Close hint
+  ctx.font = '6px "Press Start 2P", monospace';
+  ctx.fillStyle = '#334455';
+  ctx.fillText('[ESC to dismiss and ignore]', px + 12, py + ph - 10);
 }
 
 function drawObserver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
@@ -1713,6 +1930,16 @@ function updateHUD(): void {
 // ── INPUT ──────────────────────────────────────────────────
 
 function setupInput(canvas: HTMLCanvasElement): void {
+  // ESC dismisses petition panel
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && state.petitionVisible) {
+      state.petitionVisible = false;
+    }
+    // P key triggers petition (for testing)
+    if (e.key === 'p' || e.key === 'P') {
+      void synthesizePetition();
+    }
+  });
   document.querySelectorAll<HTMLButtonElement>('.tool').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
@@ -1738,6 +1965,25 @@ function setupInput(canvas: HTMLCanvasElement): void {
     const scaleY = canvas.height / rect.height;
     const sx = (e.clientX - rect.left) * scaleX;
     const sy = (e.clientY - rect.top) * scaleY;
+
+    // Petition panel click handling
+    if (state.petitionVisible && state.throngPetition.length > 0) {
+      const pw = 360, ph = 180 + state.throngPetition.length * 38;
+      const px = Math.floor(canvas.width / 2 - pw / 2);
+      const py = Math.floor((canvas.height) / 2 - ph / 2);
+      state.throngPetition.forEach((_, i) => {
+        const iy = py + 58 + i * 38;
+        const grantX = px + pw - 104, denyX = px + pw - 54;
+        const btnY = iy + 6;
+        if (sx >= grantX && sx <= grantX + 44 && sy >= btnY && sy <= btnY + 16) {
+          grantPetition(i);
+        } else if (sx >= denyX && sx <= denyX + 44 && sy >= btnY && sy <= btnY + 16) {
+          denyPetition(i);
+        }
+      });
+      return;
+    }
+
     // Use fractional world coords for accurate creature click detection
     const { x: wx, y: wy } = screenToWorld(sx, sy);
 
@@ -1877,13 +2123,23 @@ function main(): void {
         worldCheckTimer = 0;
         void checkWorldThresholds();
 
-        // 4:19 PM daily holistic evolution (Apr 19 — birthday of this game)
-        const now = new Date();
-        const today = now.toDateString();
-        const is419 = now.getHours() === 16 && now.getMinutes() === 19;
-        if (is419 && lastEvolutionDate !== today) {
-          lastEvolutionDate = today;
+        // 4:19 PM daily holistic evolution + petition (Apr 19 — birthday of this game)
+        const evNow = new Date();
+        const evToday = evNow.toDateString();
+        const is419 = evNow.getHours() === 16 && evNow.getMinutes() === 19;
+        if (is419 && lastEvolutionDate !== evToday) {
+          lastEvolutionDate = evToday;
           void runHolisticEvolution();
+          void synthesizePetition();  // present throng's petitions to the god
+        }
+
+        // Occasionally prompt a random alive creature to generate a proposal (~every 2 min)
+        if (state.tick % 7200 === 0) {
+          const alive = state.creatures.filter(c => c.alive);
+          if (alive.length > 0) {
+            const randomCreature = alive[Math.floor(Math.random() * alive.length)];
+            void generateCreatureProposal(randomCreature);
+          }
         }
       }
 
