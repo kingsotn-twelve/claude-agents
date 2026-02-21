@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.8.0 — Feb 20, 2026
+
+### Three visualization modes
+
+Press `Tab` to cycle between TIMELINE, TREE, and GRAPH views (plus Game of Life with `--game-of-life`). `Shift-Tab` cycles backward.
+
+**TIMELINE** shows horizontal duration bars per agent, making parallelism visible at a glance. **TREE** renders the session's execution hierarchy with colored nodes. **GRAPH** is a layered flow DAG showing prompt → agent → tool convergence across conversation turns — navigate with j/k (across layers) and h/l (siblings at same depth).
+
+### Friendly tool names
+
+Tool calls now display human-readable descriptions throughout the UI: `Read file: auth.py` instead of `Read→auth.py`, `Slack: send message` instead of `mcp__claude_ai_Slack__slack_send_message`.
+
+### Performance
+
+Graph and stats drill-down queries are cached per selection — no more sqlite connections inside the render loop. Render interval tuned to 200ms.
+
+### Session visibility
+
+Sessions stay visible for 4 hours when waiting for input (was 30 min). Paused sessions show `□` with frozen duration.
+
+---
+
 ## v0.7.2 — Feb 20, 2026
 
 ### Stats drill-down
