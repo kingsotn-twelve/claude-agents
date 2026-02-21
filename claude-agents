@@ -2079,19 +2079,44 @@ def main(stdscr, game_of_life=False):
             elif state["selected"] > 0:
                 state["selected"] -= 1
         elif ch in (ord("l"), curses.KEY_RIGHT):
-            sel = state["selected"]
-            items = state["visible_items"]
-            sel_is_stat = 0 <= sel < len(items) and items[sel].get("is_stat")
-            if state["focus"] == "left" and sel >= 0 and not sel_is_stat:
-                state["focus"] = "right"
-                state["detail_scroll"] = 0
+            # Graph mode: move to next sibling at same layer
+            viz_m = VIZ_MODES[state.get("viz_mode", 0) % len(VIZ_MODES)] if state.get("viz_mode", 0) < len(VIZ_MODES) else ""
+            gn = state.get("graph_nodes", [])
+            if state["focus"] == "right" and viz_m == "graph" and gn:
+                gh = state.get("graph_hover", 0)
+                cur_layer = gn[gh]["layer"] if gh < len(gn) else -1
+                for i in range(gh + 1, len(gn)):
+                    if gn[i]["layer"] == cur_layer:
+                        state["graph_hover"] = i
+                        break
+                    elif gn[i]["layer"] != cur_layer:
+                        break  # passed this layer
             else:
-                old = state["stats_range"]
-                state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
-                if state["stats_range"] != old:
-                    refresh_data(cache, state["stats_range"])
+                sel = state["selected"]
+                items = state["visible_items"]
+                sel_is_stat = 0 <= sel < len(items) and items[sel].get("is_stat")
+                if state["focus"] == "left" and sel >= 0 and not sel_is_stat:
+                    state["focus"] = "right"
+                    state["detail_scroll"] = 0
+                    state["graph_hover"] = 0
+                else:
+                    old = state["stats_range"]
+                    state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
+                    if state["stats_range"] != old:
+                        refresh_data(cache, state["stats_range"])
         elif ch in (ord("h"), curses.KEY_LEFT):
-            if state["focus"] == "right":
+            viz_m = VIZ_MODES[state.get("viz_mode", 0) % len(VIZ_MODES)] if state.get("viz_mode", 0) < len(VIZ_MODES) else ""
+            gn = state.get("graph_nodes", [])
+            if state["focus"] == "right" and viz_m == "graph" and gn:
+                gh = state.get("graph_hover", 0)
+                cur_layer = gn[gh]["layer"] if gh < len(gn) else -1
+                for i in range(gh - 1, -1, -1):
+                    if gn[i]["layer"] == cur_layer:
+                        state["graph_hover"] = i
+                        break
+                    elif gn[i]["layer"] != cur_layer:
+                        break  # passed this layer
+            elif state["focus"] == "right":
                 state["focus"] = "left"
                 state["detail_scroll"] = 0
             else:
