@@ -70,6 +70,13 @@ interface Bone {
 
 type ToolType = 'feed' | 'clean' | 'play' | 'chop';
 
+interface InteractionEvent {
+  type: 'creature_creature' | 'creature_bone' | 'creature_tree' | 'creature_food_contest';
+  actorId: string;
+  targetId: string;
+  lastFiredAt: number;  // state.tick when last fired
+}
+
 interface GameState {
   creatures: Creature[];
   trees: Tree[];
@@ -106,6 +113,8 @@ interface GameState {
     output: string[];
     outputAge: number;
   };
+  // Interaction cooldowns: `${id1}:${id2}` → lastFiredTick
+  interactionCooldowns: Map<string, number>;
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -186,6 +195,7 @@ const state: GameState = {
     output: [],
     outputAge: 999,
   },
+  interactionCooldowns: new Map(),
 };
 
 // Feature 2: Player action tracking
@@ -460,6 +470,257 @@ function saveCreatureEvent(creature: Creature, tool: string, outcome: Record<str
       timestamp: Date.now(),
     });
   };
+}
+
+// ── INTERACTION ENGINE ─────────────────────────────────────
+
+function checkInteractionGates(
+  actor: Creature,
+  target: { id?: string },
+  dist: number,
+  proxThreshold: number,
+  cooldownTicks: number
+): boolean {
+  if (dist > proxThreshold) return false;
+  const key = [actor.id ?? '', (target as {id?: string}).id ?? ''].sort().join(':');
+  const lastFired = state.interactionCooldowns.get(key) ?? 0;
+  if (state.tick - lastFired < cooldownTicks) return false;
+  return true;
+}
+
+function setCooldown(id1: string, id2: string): void {
+  const key = [id1, id2].sort().join(':');
+  state.interactionCooldowns.set(key, state.tick);
+}
+
+function maslowTier(c: Creature): number {
+  if (c.hunger < 25 || c.clean < 20) return 1;  // Physiological crisis
+  if (c.happiness < 30) return 2;                // Safety/comfort need
+  if ((c.evolutionGeneration ?? 0) < 2) return 3; // Belonging phase
+  return 4;                                       // Esteem/actualization
+}
+
+async function handleCreatureCreatureInteraction(a: Creature, b: Creature): Promise<void> {
+  setCooldown(a.id ?? '', b.id ?? '');
+
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) {
+    // Deterministic fallback
+    const sameLineage = (a.lineage ?? '').slice(0, 2) === (b.lineage ?? '').slice(0, 2);
+    if (sameLineage) {
+      a.happiness = Math.min(100, a.happiness + 5);
+      b.happiness = Math.min(100, b.happiness + 5);
+    } else if (maslowTier(a) === 1 || maslowTier(b) === 1) {
+      // Competition when hungry
+      const weaker = a.hunger < b.hunger ? a : b;
+      weaker.vx = (Math.random() - 0.5) * 2;
+      weaker.vy = (Math.random() - 0.5) * 2;
+    }
+    return;
+  }
+
+  const sameLineage = (a.lineage ?? '').slice(0, 2) === (b.lineage ?? '').slice(0, 2);
+  const context = `Creature A: lineage=${a.lineage} gen=${a.evolutionGeneration ?? 0} hunger=${Math.round(a.hunger)} happy=${Math.round(a.happiness)} maslow_tier=${maslowTier(a)} events=${a.eventLog?.slice(-2).join(';') ?? 'none'}
+Creature B: lineage=${b.lineage} gen=${b.evolutionGeneration ?? 0} hunger=${Math.round(b.hunger)} happy=${Math.round(b.happiness)} maslow_tier=${maslowTier(b)}
+Same lineage: ${sameLineage}
+Epoch: ${epochName(state.epoch ?? 0)}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        system: `You arbitrate a creature encounter in a god-game. Return JSON only:
+{"outcome": "bond"|"compete"|"trade"|"ignore"|"flee",
+ "a_delta": {"hunger": 0, "happiness": 0, "vx": 0, "vy": 0},
+ "b_delta": {"hunger": 0, "happiness": 0, "vx": 0, "vy": 0},
+ "log": "one sentence describing what happened"}
+Same-lineage creatures lean toward bond/trade. Hungry creatures compete. Deltas should be small (-15 to +15).`,
+        messages: [{ role: 'user', content: context }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const result = JSON.parse(data.content?.[0]?.text ?? '{}') as {
+      outcome?: string;
+      a_delta?: { hunger?: number; happiness?: number; vx?: number; vy?: number };
+      b_delta?: { hunger?: number; happiness?: number; vx?: number; vy?: number };
+      log?: string;
+    };
+
+    const applyDelta = (c: Creature, d: typeof result.a_delta) => {
+      if (!d) return;
+      c.hunger = Math.max(0, Math.min(100, c.hunger + (d.hunger ?? 0)));
+      c.happiness = Math.max(0, Math.min(100, c.happiness + (d.happiness ?? 0)));
+      c.vx = (d.vx ?? 0);
+      c.vy = (d.vy ?? 0);
+    };
+    applyDelta(a, result.a_delta);
+    applyDelta(b, result.b_delta);
+
+    if (result.log) {
+      a.eventLog = [...(a.eventLog ?? []), result.log].slice(-10);
+      state.lastEvent = result.log;
+      state.lastEventTimer = 240;
+    }
+  } catch { /* silent fail */ }
+}
+
+function handleCreatureBoneInteraction(c: Creature, bone: Bone): void {
+  setCooldown(c.id ?? '', `bone_${Math.round(bone.x)}_${Math.round(bone.y)}`);
+
+  // Mourning: happiness hit, add to event log
+  c.happiness = Math.max(0, c.happiness - 3);
+  const event = `encountered a bone at (${Math.round(bone.x)}, ${Math.round(bone.y)})`;
+  c.eventLog = [...(c.eventLog ?? []), event].slice(-10);
+
+  // Elders (deathsWitnessed >= 3) are less affected — they've seen this before
+  if (((c as Creature & { deathsWitnessed?: number }).deathsWitnessed ?? 0) >= 3) {
+    c.happiness = Math.min(100, c.happiness + 2); // elders find calm in death
+  }
+}
+
+function runInteractionSystem(): void {
+  const alive = state.creatures.filter(c => c.alive);
+
+  // Creature <-> Creature
+  for (let i = 0; i < alive.length; i++) {
+    for (let j = i + 1; j < alive.length; j++) {
+      const a = alive[i], b = alive[j];
+      const dist = Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+      if (checkInteractionGates(a, b, dist, 1.8, 300)) {
+        void handleCreatureCreatureInteraction(a, b);
+      }
+    }
+  }
+
+  // Creature <-> Bone (mourning)
+  for (const c of alive) {
+    for (const bone of state.bones) {
+      const dist = Math.sqrt((c.x - bone.x) ** 2 + (c.y - bone.y) ** 2);
+      const boneId = `bone_${Math.round(bone.x)}_${Math.round(bone.y)}`;
+      if (checkInteractionGates(c, { id: boneId }, dist, 1.5, 600)) {
+        handleCreatureBoneInteraction(c, bone);
+      }
+    }
+  }
+}
+
+// ── PERSISTENT WORLD STATE (IndexedDB) ────────────────────
+
+function saveWorldState(): void {
+  const snapshot = {
+    version: 1,
+    savedAt: Date.now(),
+    tick: state.tick,
+    creatures: state.creatures.map(c => ({
+      ...c,
+      behaviorFn: undefined,  // can't serialize functions
+      targetFood: undefined,
+    })),
+    trees: state.trees,
+    bones: state.bones,
+    resources: state.resources,
+    pollutionLevel: state.pollutionLevel,
+    worldEvents: state.worldEvents,
+    epoch: state.epoch,
+    observedPrinciples: state.observedPrinciples,
+    ancestralMemory: state.ancestralMemory,
+    playerProfile: state.playerProfile,
+    lastEvolutionDate,
+  };
+
+  const req = indexedDB.open('thronglets_world', 1);
+  req.onupgradeneeded = () => {
+    req.result.createObjectStore('state', { keyPath: 'id' });
+    req.result.createObjectStore('societies', { keyPath: 'lineage' });
+  };
+  req.onsuccess = () => {
+    const db = req.result;
+    const tx = db.transaction('state', 'readwrite');
+    tx.objectStore('state').put({ id: 'world', ...snapshot });
+
+    // Save per-lineage societies
+    const lineageGroups = new Map<string, Creature[]>();
+    state.creatures.filter(c => c.alive).forEach(c => {
+      const lin = (c.lineage ?? 'unknown').slice(0, 2);
+      if (!lineageGroups.has(lin)) lineageGroups.set(lin, []);
+      lineageGroups.get(lin)!.push(c);
+    });
+
+    const soc_tx = db.transaction('societies', 'readwrite');
+    lineageGroups.forEach((members, lineage) => {
+      soc_tx.objectStore('societies').put({
+        lineage,
+        memberCount: members.length,
+        avgHunger: members.reduce((s, c) => s + c.hunger, 0) / members.length,
+        maxGen: Math.max(...members.map(c => c.evolutionGeneration ?? 0)),
+        collectiveEvents: members.flatMap(c => c.eventLog ?? []).slice(-20),
+        savedAt: Date.now(),
+      });
+    });
+  };
+}
+
+function loadWorldState(callback: (loaded: boolean) => void): void {
+  const req = indexedDB.open('thronglets_world', 1);
+  req.onupgradeneeded = () => {
+    req.result.createObjectStore('state', { keyPath: 'id' });
+    req.result.createObjectStore('societies', { keyPath: 'lineage' });
+  };
+  req.onsuccess = () => {
+    const db = req.result;
+    const tx = db.transaction('state', 'readonly');
+    const getReq = tx.objectStore('state').get('world');
+    getReq.onsuccess = () => {
+      const snap = getReq.result as {
+        creatures?: Creature[];
+        tick?: number;
+        trees?: Tree[];
+        bones?: Bone[];
+        resources?: { wood: number; gems: number; bones: number };
+        pollutionLevel?: number;
+        worldEvents?: string[];
+        epoch?: 0 | 1 | 2 | 3 | 4;
+        observedPrinciples?: string[];
+        ancestralMemory?: string[];
+        playerProfile?: string;
+        lastEvolutionDate?: string;
+      } | undefined;
+
+      if (!snap || !snap.creatures?.length) {
+        callback(false);
+        return;
+      }
+
+      // Restore state
+      state.tick = snap.tick ?? 0;
+      state.creatures = (snap.creatures ?? []).map((c: Creature) => ({
+        ...c,
+        alive: c.alive ?? true,
+        behaviorFn: undefined,
+        targetFood: null,
+      }));
+      state.trees = snap.trees ?? [];
+      state.bones = snap.bones ?? [];
+      state.resources = snap.resources ?? { wood: 0, gems: 0, bones: 0 };
+      state.pollutionLevel = snap.pollutionLevel ?? 0;
+      state.worldEvents = snap.worldEvents ?? [];
+      state.epoch = snap.epoch ?? 0;
+      state.observedPrinciples = snap.observedPrinciples ?? [];
+      state.ancestralMemory = snap.ancestralMemory ?? [];
+      state.playerProfile = snap.playerProfile ?? '';
+      lastEvolutionDate = snap.lastEvolutionDate ?? '';
+
+      console.log(`[Thronglets] Restored: ${state.creatures.filter(c => c.alive).length} alive creatures, tick ${state.tick}`);
+      state.lastEvent = `resumed from tick ${state.tick}`;
+      state.lastEventTimer = 300;
+      callback(true);
+    };
+    getReq.onerror = () => callback(false);
+  };
+  req.onerror = () => callback(false);
 }
 
 // ── FEATURE 1: SELF-EVOLVING BEHAVIOR ─────────────────────
@@ -1560,12 +1821,21 @@ function main(): void {
   resize();
   window.addEventListener('resize', resize);
 
-  initWorld();
-  setupInput(canvas);
+  // Auto-save on unload
+  window.addEventListener('beforeunload', saveWorldState);
 
-  {
+  loadWorldState((loaded) => {
+    if (!loaded) {
+      initWorld();
+    }
+    setupInput(canvas);
+
+    // Auto-save every 30 seconds
+    setInterval(saveWorldState, 30_000);
+
     let lastTime = performance.now();
     let worldCheckTimer = 0;
+    let interactionTimer = 0;
 
     function loop(now: number): void {
       const dt = Math.min((now - lastTime) / 16.67, 3);
@@ -1594,6 +1864,13 @@ function main(): void {
         state.lastEventTimer -= dt;
       }
 
+      // Interaction engine — run every 30 frames (twice per second at 60fps)
+      interactionTimer += dt;
+      if (interactionTimer >= 30) {
+        interactionTimer = 0;
+        runInteractionSystem();
+      }
+
       // Feature 4: Check world thresholds every 60 frames
       worldCheckTimer += dt;
       if (worldCheckTimer >= 60) {
@@ -1616,7 +1893,7 @@ function main(): void {
     }
 
     requestAnimationFrame(loop);
-  }
+  });
 }
 
 main();
