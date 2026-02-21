@@ -136,24 +136,18 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
         ):
             data["active_sessions"].append(dict(row))
 
-        # Reap orphaned agents: stopped_at IS NULL but parent session is no longer active.
-        # Grace period of 5 min avoids prematurely killing agents whose session just started.
-        _active_sids = [s["session_id"] for s in data["active_sessions"]]
-        if _active_sids:
-            _ph = ",".join("?" * len(_active_sids))
-            conn.execute(
-                f"""UPDATE agent SET stopped_at = datetime('now')
-                    WHERE stopped_at IS NULL
-                      AND started_at < datetime('now', '-5 minutes')
-                      AND session_id NOT IN ({_ph})""",
-                _active_sids,
-            )
-        else:
-            conn.execute(
-                """UPDATE agent SET stopped_at = datetime('now')
-                   WHERE stopped_at IS NULL
-                     AND started_at < datetime('now', '-5 minutes')"""
-            )
+        # Reap orphaned agents: parent session has no open prompt rows (stoped_at IS NOT NULL
+        # on all its prompts), meaning Claude fired the Stop hook and the session is truly gone.
+        # This avoids reaping agents for sessions that are open but idle.
+        # Grace period of 5 min covers agents whose session just started.
+        conn.execute(
+            """UPDATE agent SET stopped_at = datetime('now')
+               WHERE stopped_at IS NULL
+                 AND started_at < datetime('now', '-5 minutes')
+                 AND session_id NOT IN (
+                     SELECT DISTINCT session_id FROM prompt WHERE stoped_at IS NULL
+                 )"""
+        )
         conn.commit()
 
         # Running agents (skip ghosts with empty type)
