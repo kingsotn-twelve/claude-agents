@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -1336,12 +1336,26 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         life_y = content_top + detail_h
         life_rh = total_rh - detail_h
         if state.get("game_of_life") and life_rh >= 4 and active_all:
+            # Welcome screen for first 5 seconds
+            life_started = state.setdefault("life_started", time.time())
+            show_welcome = (time.time() - life_started) < 5.0
+
             life_sid = None
             if sel_agent and sel_agent.get("is_session"):
                 life_sid = sel_agent["session_id"]
             if not life_sid and active_all:
                 life_sid = active_all[0]["session_id"]
-            if life_sid:
+            if life_sid and show_welcome:
+                wy = life_y + 1
+                R(wy, rx + 2, "CONWAY'S GAME OF LIFE", CYAN | curses.A_BOLD); wy += 2
+                R(wy, rx + 2, "Each cell lives or dies by 3 rules:", DIM); wy += 1
+                R(wy, rx + 2, "  1. < 2 neighbors  \u2192  dies  (lonely)", DIM); wy += 1
+                R(wy, rx + 2, "  2. 2-3 neighbors  \u2192  lives (happy)", DIM); wy += 1
+                R(wy, rx + 2, "  3. > 3 neighbors  \u2192  dies  (crowded)", DIM); wy += 1
+                R(wy, rx + 2, "  4. dead + 3 nbrs  \u2192  born  (new life)", DIM); wy += 2
+                R(wy, rx + 2, f"Seed: {life_sid[:7]}  (from your prompt)", YELLOW); wy += 1
+                R(wy, rx + 2, "Each session gets a unique universe.", DIM)
+            elif life_sid:
                 char_w = rw - 4
                 char_h = life_rh - 1
                 grid_rows = char_h * 4

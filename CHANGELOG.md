@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.6.0 — Feb 20, 2026
+
+### Layout overhaul
+
+The left panel is now four stacked sections: TEAMS, SESSIONS, HISTORY, and STATS. SESSIONS shows inline tool events under each session row (merged from the old LIVE panel). HISTORY is capped at 8 rows. STATS (AGENTS/TOOLS rankings) moved from the right panel to bottom-left so it's always visible. The right panel is now DETAIL (only when selected) plus an optional Game of Life animation.
+
+### Navigate everything with j/k
+
+Sessions, teammates, agents, and history items are all selectable. Navigate down through SESSIONS into HISTORY — selecting a completed agent opens its transcript in iTerm2. The DETAIL panel sizes itself to fit its content instead of taking a fixed 2/3 of the panel.
+
+### Stats time ranges
+
+Press `h`/`l` to cycle the STATS panel through five time windows: 1h, 1d, 7d, 30d, and all. The active range shows as `[7d]` in the panel title. DB queries refresh immediately when you switch.
+
+### Selection colors
+
+Selected rows now use proper color pairs (white/cyan/yellow on dark gray) instead of the old `A_REVERSE` inversions that made everything unreadable.
+
+### Conway's Game of Life
+
+Run with `--game-of-life` to fill the right panel with a cellular automaton. Each session gets its own universe seeded from its prompt text. A 5-second welcome screen explains the rules before the simulation begins. Cells are color-coded by density: dim (sparse), cyan, green, yellow (packed).
+
+---
+
 ## v0.5.2 — Feb 20, 2026
 
 ### Inline DETAIL panel
