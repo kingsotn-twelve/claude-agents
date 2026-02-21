@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.1 — Feb 20, 2026
+
+### Game of Life fixes
+
+Centered welcome screen with shorter copy. Life now shows even when idle (no active sessions) using a fallback seed.
+
+---
+
 ## v0.6.0 — Feb 20, 2026
 
 ### Layout overhaul
