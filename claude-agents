@@ -957,16 +957,8 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     n_feed = min(len(tool_feed), 6)
     live_h = (2 + n_feed) if tool_feed else 0
 
-    # Sessions panel
-    n_sess_rows = 0
-    for s in active:
-        n_sess_rows += 1
-        children = agents_by_session.get(s["session_id"], [])
-        if children:
-            n_sess_rows += len(children)
-        elif s["session_id"] in tool_events:
-            n_sess_rows += 1
-    n_sess_rows += len(orphan_agents)
+    # Sessions panel (flat — detail is in the DETAIL panel)
+    n_sess_rows = len(active) + len(orphan_agents)
     sess_h = (2 + n_sess_rows) if (active or orphan_agents) else 0
 
     # History gets remaining space
@@ -1137,8 +1129,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             if sr >= cr + sess_h - 1:
                 break
             sid = s["session_id"]
-            child_agents = agents_by_session.get(sid, [])
-            has_agents = len(child_agents) > 0
+            has_agents = sid in agents_by_session
             waiting = bool(s.get("lastWaitUserAt")) and not has_agents
             sid_short = short_session(sid)
             prompt = short_prompt(s.get("prompt"), max(10, lw - 32))
@@ -1183,60 +1174,6 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 L(sr, 18, prompt, WHITE)
                 L(sr, lw - 12, spark, CYAN)
             sr += 1
-
-            # Child agents (tree connectors)
-            if has_agents:
-                for i, a in enumerate(child_agents):
-                    if sr >= cr + sess_h - 1:
-                        break
-                    is_last = (i == len(child_agents) - 1)
-                    connector = "\u2514" if is_last else "\u251c"
-                    adur = fmt_dur(a["started_at"])
-                    atype = a["agent_type"] or "agent"
-                    aid = short_id(a["agent_id"])
-                    tag = dir_tag(a.get("cwd", ""))
-                    vidx = len(visible_items)
-                    visible_items.append(a)
-                    is_sel = (vidx == state.get("selected", -1))
-                    a_spark = sparkline(activity.get(a.get("session_id", ""), []))
-
-                    if is_sel:
-                        try:
-                            stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
-                        except curses.error:
-                            pass
-                        L(sr, 4, connector, DIM | curses.A_REVERSE)
-                        L(sr, 6, "\u25b6", YELLOW | curses.A_REVERSE)
-                        L(sr, 8, f"{adur:>5}", YELLOW | curses.A_REVERSE)
-                        col = 14
-                        if tag:
-                            L(sr, col, tag, CYAN | curses.A_REVERSE)
-                            col += len(tag) + 1
-                        L(sr, col, atype, curses.A_REVERSE | curses.A_BOLD)
-                        L(sr, col + len(atype) + 1, aid, curses.A_REVERSE)
-                        L(sr, lw - 12, a_spark, DIM | curses.A_REVERSE)
-                    else:
-                        L(sr, 4, connector, DIM)
-                        L(sr, 6, sc, MAGENTA)
-                        L(sr, 8, f"{adur:>5}", YELLOW)
-                        col = 14
-                        if tag:
-                            L(sr, col, tag, CYAN)
-                            col += len(tag) + 1
-                        L(sr, col, atype, MAGENTA)
-                        L(sr, col + len(atype) + 1, aid, DIM)
-                        L(sr, lw - 12, a_spark, CYAN)
-                    sr += 1
-            elif sid in tool_events:
-                tools = tool_events[sid]
-                parts = []
-                for t in tools:
-                    name = t["tool_name"]
-                    label = t["tool_label"]
-                    parts.append(f"{name}\u2192{label}" if label and label != name else name)
-                L(sr, 4, "\u2514", DIM)
-                L(sr, 6, "  ".join(parts)[:lw - 8], DIM)
-                sr += 1
 
         # Orphan agents
         for a in orphan_agents:
@@ -1346,7 +1283,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                      sel_agent, teams, top_agents, top_tools, cache)
 
     # -- Footer (full width) --
-    if visible_items:
+    status = state.get("status_msg", "")
+    if status and time.time() < state.get("status_until", 0):
+        safe_add(stdscr, h - 1, 0, f" {status}", w, YELLOW)
+    elif visible_items:
         safe_add(stdscr, h - 1, 0, " j/k=select  esc=deselect  enter=open  q=quit", w, DIM)
     else:
         safe_add(stdscr, h - 1, 0, " q=quit", w, DIM)
@@ -1392,16 +1332,21 @@ def main(stdscr):
             if 0 <= idx < len(agents):
                 item = agents[idx]
                 short = item["agent_id"][:7]
-                if item.get("is_session") or item.get("is_teammate"):
-                    # Focus existing iTerm2 pane by cwd
-                    err = focus_session_in_iterm2(item.get("cwd", ""))
-                    label = item.get("teammate_name") or "session"
-                    state["status_msg"] = err if err else f"focused: {label}-{short}"
-                else:
-                    # Open agent transcript in new tab
-                    err = open_agent_in_iterm2(item)
-                    atype = (item.get("agent_type") or "agent")[:12]
-                    state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
+                # Temporarily restore terminal for subprocess calls
+                curses.def_prog_mode()
+                curses.endwin()
+                try:
+                    if item.get("is_session") or item.get("is_teammate"):
+                        err = focus_session_in_iterm2(item.get("cwd", ""))
+                        label = item.get("teammate_name") or "session"
+                        state["status_msg"] = err if err else f"focused: {label}-{short}"
+                    else:
+                        err = open_agent_in_iterm2(item)
+                        atype = (item.get("agent_type") or "agent")[:12]
+                        state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
+                finally:
+                    stdscr.refresh()
+                    curses.reset_prog_mode()
                 state["status_until"] = time.time() + 3
 
 
