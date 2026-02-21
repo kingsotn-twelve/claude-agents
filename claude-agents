@@ -622,6 +622,7 @@ def draw_box(stdscr, y, x, h, w, title="", title_attr=0, border_attr=0):
 def refresh_data(cache: dict, stats_range_idx: int = 2) -> dict:
     """Refresh cached dashboard data from DB + filesystem."""
     data = query_db(DB_PATH, stats_range_idx)
+    data["_stats_range_idx"] = stats_range_idx
     active_all = data["active_sessions"]
     active_sids_all = {s["session_id"] for s in active_all}
     team_data = query_teams(DB_PATH, active_sids_all)
@@ -657,6 +658,8 @@ def _detail_content_height(sel_agent, pw, cache):
     if sel_agent.get("is_teammate"):
         tasks = sel_agent.get("_tasks", [])
         return 2 + (1 if not tasks else 2 + len(tasks))  # header + divider + progress + blank + tasks
+    if sel_agent.get("is_stat"):
+        return 2 + 2 + 10  # header + divider + avg + recent runs/targets
     # Agent transcript — cap preview at 8
     return 2 + 8
 
@@ -791,6 +794,125 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
                 break
             P(pr, col, line[:pw], WHITE)
             pr += 1
+
+    elif sel_agent and sel_agent.get("is_stat"):
+        # Stats drill-down
+        kind = sel_agent.get("stat_kind", "")
+        label = sel_agent.get("stat_label", "?")
+        cnt = sel_agent.get("stat_count", 0)
+        cwd = sel_agent.get("cwd", "")
+        atype = sel_agent.get("agent_type", "")
+        tag = dir_tag(cwd)
+
+        P(pr, col, f"{label}  ({cnt} total)", CYAN | curses.A_BOLD)
+        pr += 1
+        P(pr, col, SYMBOLS["h"] * pw, DIM)
+        pr += 1
+
+        # Query recent instances from DB
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            range_idx = cache.get("data", {}).get("_stats_range_idx", 2)
+            _, sql_interval = STATS_RANGES[min(range_idx, len(STATS_RANGES) - 1)]
+
+            if kind == "agent":
+                time_filter = f"AND started_at > datetime('now', '{sql_interval}')" if sql_interval else ""
+                cwd_filter = f"AND cwd = '{cwd}'" if cwd else ""
+                rows = conn.execute(
+                    f"""SELECT agent_id, agent_type, cwd, started_at, stopped_at
+                       FROM agent
+                       WHERE agent_type = ? {time_filter} {cwd_filter}
+                       ORDER BY started_at DESC LIMIT 8""",
+                    (atype,)
+                ).fetchall()
+
+                if rows:
+                    # Avg duration
+                    durs = []
+                    for r in rows:
+                        if r["stopped_at"] and r["started_at"]:
+                            try:
+                                s = datetime.fromisoformat(r["started_at"]).replace(tzinfo=timezone.utc)
+                                e = datetime.fromisoformat(r["stopped_at"]).replace(tzinfo=timezone.utc)
+                                durs.append((e - s).total_seconds())
+                            except Exception:
+                                pass
+                    if durs:
+                        avg = sum(durs) / len(durs)
+                        P(pr, col, f"avg duration: {fmt_dur('2000-01-01T00:00:00', f'2000-01-01T00:00:{int(avg):02d}') if avg < 60 else fmt_dur('2000-01-01T00:00:00', '2000-01-01T00:' + f'{int(avg//60):02d}:{int(avg%60):02d}')}", DIM)
+                        pr += 1
+                    pr += 1
+
+                    P(pr, col, "RECENT RUNS", CYAN)
+                    pr += 1
+                    for r in rows:
+                        if pr >= max_row_virtual:
+                            break
+                        aid = short_id(r["agent_id"])
+                        dur = fmt_dur(r["started_at"], r["stopped_at"]) if r["stopped_at"] else fmt_dur(r["started_at"])
+                        ts = fmt_time(r["started_at"])
+                        running = "\u25cf" if not r["stopped_at"] else "\u25cb"
+                        P(pr, col, f"{running} {ts}  {dur:>6}  {aid}", DIM)
+                        pr += 1
+                else:
+                    P(pr, col, "(no recent runs)", DIM)
+
+            elif kind == "tool":
+                time_filter = f"AND te.created_at > datetime('now', '{sql_interval}')" if sql_interval else ""
+                cwd_filter = f"AND p.cwd = '{cwd}'" if cwd else ""
+                # Top labels for this tool
+                label_rows = conn.execute(
+                    f"""SELECT te.tool_label, COUNT(*) as cnt
+                       FROM tool_event te
+                       LEFT JOIN prompt p ON te.session_id = p.session_id
+                       WHERE te.tool_name = ? {time_filter} {cwd_filter}
+                       GROUP BY te.tool_label ORDER BY cnt DESC LIMIT 8""",
+                    (atype,)
+                ).fetchall()
+
+                if label_rows:
+                    P(pr, col, "TOP TARGETS", CYAN)
+                    pr += 1
+                    max_lc = label_rows[0]["cnt"] if label_rows else 1
+                    for lr in label_rows:
+                        if pr >= max_row_virtual:
+                            break
+                        tl = lr["tool_label"] or "(none)"
+                        tc = lr["cnt"]
+                        bar_w = 6
+                        filled = int(tc / max_lc * bar_w) if max_lc > 0 else 0
+                        bar = "\u2588" * filled + "\u2591" * (bar_w - filled)
+                        P(pr, col, f"{bar} {tc:>3}  {tl[:pw - 14]}", DIM)
+                        pr += 1
+
+                    pr += 1
+                    # Recent uses
+                    recent_rows = conn.execute(
+                        f"""SELECT te.tool_label, te.created_at, te.session_id
+                           FROM tool_event te
+                           LEFT JOIN prompt p ON te.session_id = p.session_id
+                           WHERE te.tool_name = ? {time_filter} {cwd_filter}
+                           ORDER BY te.created_at DESC LIMIT 6""",
+                        (atype,)
+                    ).fetchall()
+                    if recent_rows and pr < max_row_virtual:
+                        P(pr, col, "RECENT", CYAN)
+                        pr += 1
+                        for rr in recent_rows:
+                            if pr >= max_row_virtual:
+                                break
+                            ts = fmt_time(rr["created_at"])
+                            tl = rr["tool_label"] or ""
+                            sid = short_session(rr["session_id"])
+                            P(pr, col, f"{ts}  {sid}  {tl[:pw - 18]}", DIM)
+                            pr += 1
+                else:
+                    P(pr, col, "(no recent uses)", DIM)
+
+            conn.close()
+        except Exception:
+            P(pr, col, "(db error)", DIM)
 
     else:
         # Nothing selected — show keybinding hints
