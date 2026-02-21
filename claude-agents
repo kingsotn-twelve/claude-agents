@@ -1364,8 +1364,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             content_rows = _detail_content_height(sel_agent, rw - 4, cache)
             focused = state.get("focus") == "right"
             # When focused, cap height to allow scrolling; otherwise fit content
-            max_detail = min(12, total_rh - 4) if focused else total_rh - 4
-            detail_h = min(content_rows + 2, max_detail)
+            detail_h = min(content_rows + 2, total_rh - 4)
             title_str = "\u25b6 DETAIL" if focused else "DETAIL"
             draw_box(stdscr, content_top, rx, detail_h, rw, title=title_str,
                      border_attr=CYAN if focused else 0)
