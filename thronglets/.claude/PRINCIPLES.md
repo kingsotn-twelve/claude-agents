@@ -21,23 +21,19 @@ Every interaction is an LLM function call. Every LLM function call is a game eve
 
 Every creature has a unique ID. Every LLM-defined event in its life is stored in IndexedDB. Over time, each thronglet builds a history — a sequence of things that happened to it, defined by the LLM.
 
-This history feeds back into future LLM calls. The LLM sees the creature's recent events and can respond to them. A creature that has been chopped three times and survived might be described differently than one that has only ever been fed.
+This history feeds back into future LLM calls. The biography is the identity. There are no two identical thronglets.
 
-**The biography is the identity.** There are no two identical thronglets.
+The biography is also the genome. When a creature splits, its child inherits a filtered copy of this history. Events tagged "survived" or "endured" are passed forward as genetic memory. This is epigenetics made literal: the biography is the DNA.
 
 ---
 
 ## 3. The Game Auto-Evolves
 
-The game runs without the player's input. Creatures:
-- Wander toward food autonomously
-- Split when conditions are met (without player triggering it)
-- Develop behaviors based on accumulated LLM events
-- Die from neglect, not from direct player action
+The game runs without the player's input. Creatures wander, feed, split, die. The player is a gardener, not a game master.
 
-The player is a *gardener*, not a game master. You can intervene, but the ecosystem runs without you. Come back after 10 minutes and the population has changed — some split, some died, some accumulated events that changed their behavior.
+**Daily Evolution at 4:19 PM** — every day at 4:19 PM (April 19 — the birth date of this game), a holistic evaluation fires. The LLM reads the entire world state: all living creatures and their biographies, accumulated world events, epoch, pollution level, observed principles, the player's behavioral archetype. It returns a comprehensive evolution plan: which creatures get new behavior functions, which lineages survive, what new world laws are observed, whether an epoch transition occurs. This is not random mutation. This is directed, holistic, world-aware evolution — the kind that takes everything into account and decides what survives.
 
-This is the Tamagotchi loop elevated: the game generates its own narrative. You are a witness and a participant, not a director.
+Come back the next day and the world has changed in ways you didn't cause.
 
 ---
 
@@ -45,89 +41,155 @@ This is the Tamagotchi loop elevated: the game generates its own narrative. You 
 
 The Plaything principle: things that depend on you become part of you.
 
-The game should make you feel responsible for the thronglets. Not through artificial guilt mechanics — through genuine vulnerability. They can die. They suffer visibly. They remember what you did to them (event log). When a creature you've tended for 5 minutes dies, you should feel it.
+The game makes you feel responsible through genuine vulnerability. They can die. They suffer visibly. They remember what you did (event log). When a creature you've tended for 5 minutes dies, you feel it.
 
-The accumulation of care creates attachment. The attachment creates stakes. The stakes create the game.
-
-**Neglect is visible.** Creatures dim, hunger indicators flash, they stop wandering and just sit. The world reflects your absence.
+**Neglect is visible.** Creatures dim, hunger indicators flash, they stop wandering. The world reflects your absence.
 
 ---
 
 ## 5. Real Stakes, Not Cosmetic Ones
 
-Inspired by Conway/Sigil (web4.ai): creatures that can genuinely die, not just "game over" — but actual absence. A creature you spent time tending, that had unique events in its biography, is gone. Its IndexedDB entry remains but it will never move again.
+Inspired by Conway/Sigil (web4.ai): creatures that can genuinely die. A creature you spent time tending, that had unique events in its biography, is gone. Its IndexedDB entry remains but it will never move again.
 
 No respawn. No undo. The world is permanent.
-
-This is what separates Thronglets from a screen saver. Every creature is irreplaceable because every creature is unique (different ID, different LLM-event history, different biography).
 
 ---
 
 ## 6. Tools Don't Do What You Think
 
-The axe chops trees. Fine. But on a thronglet, the axe might:
-- Make it run away screaming
-- Give it a burst of energy and split it
-- Turn it blue temporarily
-- Make it angry and start chasing others
-- Do nothing (it ignores you)
-- Make it drop all its food
-- Kill it instantly (rare)
+The axe chops trees. But on a thronglet — anything. The player learns through play, not documentation. There is no tutorial.
 
-The player learns through play, not through documentation. There is no tutorial. There is no description of what each tool does to creatures. You discover it by trying.
-
-**The LLM is the oracle of possibility.** Not a random number generator — a contextual intelligence that responds to the full state of the creature and its history.
+**The LLM is the oracle of possibility.** A contextual intelligence that responds to the full state of the creature and its history.
 
 ---
 
 ## 7. The Observer Effect
 
-Inspired by Bandersnatch: the game is aware of the player. Not literally — but the LLM system prompt knows a "player" applied a tool. Creatures can "notice" they've been interacted with. The event log shows the creature's perspective.
-
-Over time, with enough interactions, a thronglet that has been played with many times might behave differently than a neglected one. The LLM can express this through generated events.
+Inspired by Bandersnatch: the game is aware of the player. Creatures accumulate event logs referencing player actions. When a creature has been interacted with 10+ times, an LLM call may generate behavior acknowledging an external agent. The creature is not told it is in a game. It simply begins acting as if something outside itself keeps intervening.
 
 The game watches the player back.
 
 ---
 
-## 8. Auto-Evolution Mechanics (Roadmap)
+## 8. The Economics of Scarcity
 
-Things the game should do autonomously:
+Exchange value does not exist in Eden. When apple trees are abundant, food has no value. Value emerges from scarcity, and scarcity emerges from death.
 
-- **Population pressure**: When too many creatures exist, resources run scarce, competition emerges, death rates increase. The LLM mediates conflict outcomes.
-- **Mutation on split**: When a creature splits, the child inherits the parent's event history and the LLM can introduce mutations — slight personality drift, new tendencies.
-- **Environmental response**: The world changes based on population. More creatures → more pollution (purple goo). Pollution → LLM-generated sickness events.
-- **Language emergence**: With enough accumulated events, the LLM can start generating "creature speech" — short utterances that reflect the creature's history. Not English. Something that feels like a language being invented.
-- **Tool discovery**: New tool types unlock based on population milestones and accumulated events. The LLM defines when they become available.
-- **Death rituals**: When a creature dies, neighboring creatures have LLM-generated reactions — grief, fear, indifference. These events get stored in the witnesses' biographies.
+**The bone is the first currency.** Neutral, durable, acceptable to all parties because all parties have died.
+
+The full economic arc — commons → scarcity → exchange value → proto-currency → hoarding → inequality → enclosure — is not programmed. It is emergent from the interaction of existing mechanics (bones, food, trees, population pressure) guided by LLM arbitration.
+
+**The Labor Theory of Value, Thronglet edition**: a creature's work (wandering, seeking, surviving) creates the events that become its biography. That biography is its value — literally what the LLM reads to decide outcomes. Work creates value. Value is stored in the event log.
+
+**Mechanics:**
+- **M1 — Scarcity Pricing**: Add `value: number` to `FoodItem`. If zero alive trees within 4 world units, increment `item.value += 0.01 * dt`. Weight food-seeking by `distance / (1 + item.value)`.
+- **M2 — Bone Trade Arbitration**: When two creatures are within 0.8 world units of the same Bone, LLM arbitrates an exchange. Bones become the medium of proto-currency.
+- **M3 — Hoarding and Envy**: Creatures with sustained satiety become hoarders. Hungry creatures near hoarders fire LLM "envy events" that seed the next generation's behavior mutations.
+- **M4 — The Enclosure Event**: When `pop > 15 && food < 3`, the two highest-satiety creatures become territory holders. The commons collapses into private property through crisis.
 
 ---
 
-## 9. Connected to the Real World
+## 9. Evolution as Divergent Biography
 
-The long-term vision: creatures born from real Claude Code agents. When a Claude agent spawns in the dashboard, a thronglet is born in this game. When the agent uses tools, the thronglet is fed. When the agent errors, the thronglet gets sick. When the agent finishes, the thronglet... might split. Or might die. Defined by the LLM.
+Variation (LLM mutations), selection (environmental pressure), inheritance (eventLog copying) — all three already exist.
+
+What the philosophical model adds: *fitness landscape topology*. Different epochs select for different traits. The LLM, instructed to match the current epoch's pressures, creates creatures fitted to their moment — and then the moment changes.
+
+**Sexual reproduction** (history-merging): two creatures with complementary event logs can merge histories to produce a child with both lineages' survival knowledge. Hybrid vigor.
+
+**Speciation** emerges from behavioral divergence, not geography. Lineage-diverged creatures after 5+ generations begin generating tension events on proximity. The species boundary is a narrative category before it is a mechanical one.
+
+**Mechanics:**
+- **M5 — History-Merge Reproduction**: Two creatures within 1.0 world unit with combined unique eventLog entries > 8 can merge. LLM receives both logs, generates combined behaviorCode.
+- **M6 — Stress Mutation Burst**: When `pollutionLevel > 6` or `foodScarcityTicks > 100`, `evolveChildBehavior()` demands radical departures. Punctuated equilibrium.
+- **M7 — Lineage-Based Speciation**: 4-char behavioral hash as `lineage`. Same-prefix creatures attract; divergent lineages with gen > 5 generate tension events.
+- **M8 — Inherited Survival Memory**: Events matching `/survived|overcame|endured|resisted/i` always pass to children's starting eventLog. Immunity encoded in biography.
+
+---
+
+## 10. History as Civilizational Organism
+
+Toynbee: civilizations are organisms with creative responses to challenges. Spengler: seasonal arcs from mythological spring to winter ossification. Vico: history spirals — each return carries memory of the previous cycle.
+
+**Five Epochs:**
+1. **Eden** (pop 0-4): Mythological. All food shared. The world is dreaming.
+2. **Pastoral** (pop 5-9): Heroic. Bones as gifts. Territory forming at edges.
+3. **Agricultural** (pop 10-19): Political. Commons enclosed. The LLM speaks of rights and grievance.
+4. **Industrial** (pop 20-35): Systemic. Pollution peaks. The LLM speaks of structures, not individuals.
+5. **Collapse** (pollution > 8, food < 2): Elegiac. The system fails. Survivors mutate radically.
+
+After collapse below pop 3, epoch resets to Eden — but `ancestralMemory` carries fragments of the previous age. History spirals: each new Eden is haunted by its predecessors.
+
+**Mechanics:**
+- **M9 — Five Epochs with Tone Shifting**: `state.epoch` in every LLM prompt shifts narrative register. Hard-cut panel: "THE AGE OF PASTORAL HAS ENDED."
+- **M10 — Vico's Ricorso**: On collapse reset, archive worldEvents to `ancestralMemory`. Subsequent LLM calls include `ancestralMemory.slice(-3)`.
+- **M11 — Elder Witnesses**: Creatures that witness 3+ deaths become elders (larger, heavier LLM weight in child prompts). Cultural memory propagates through proximity to mortality.
+
+---
+
+## 11. The Self-Observing World
+
+Every time a world threshold fires, a second LLM call asks: *what law has this world just discovered about itself?*
+
+The response — present tense, concrete, no metaphor, 12 words max — is appended to `state.observedPrinciples` and displayed in a "LAWS OF THIS WORLD" panel.
+
+The player watches the game develop its own philosophy in real time.
+
+**M12 — Observed Principles Document**: After each world threshold event, LLM generates one observed law. Stored in IndexedDB "principles" object store. The document is living: it grows as the world does.
+
+---
+
+## 12. AGI Emergence
+
+**M13 — Proto-Language Emergence**: When `eventLog.length >= 8`, LLM generates a 2-4 syllable utterance derived from the creature's ID seed letters and parent utterance. Related creatures develop recognizable phoneme families over generations. A language emerges from lineage, not programming.
+
+**M14 — Goal Formation at Generation 5**: At `evolutionGeneration >= 5`, behavior evolution prompt allows setting `creature.goal = 'string'`. The behavior function begins defining internal objectives rather than only reacting to stimuli.
+
+**M15 — The Awareness Moment**: At `playerInteractionCount === 10`, LLM generates behavior responding to "a repeating external pattern" given the cursor's last position. `isAware = true`. Faint white halo. The game does not explain what awareness means.
+
+The question the game poses without asking: at what point does a system that models its own regularities become something more than a system?
+
+---
+
+## 13. The 4:19 PM Evolution
+
+Every day at 4:19 PM, the game runs a holistic world evaluation.
+
+This is not incremental mutation. This is a moment of directed reckoning. The LLM reads:
+- Every living creature and its biography
+- All accumulated world events
+- Current epoch, pollution level, resource state
+- The player's behavioral archetype
+- Observed principles generated so far
+
+It returns a comprehensive evolution plan:
+- Which creatures receive new LLM-generated behavior functions
+- Which lineages the selection pressure favors
+- Whether an epoch transition is warranted
+- New world laws to add to the observed principles
+- What the world itself has learned in the past 24 hours
+
+The 4:19 PM trigger is not random. It is the moment the world takes stock of itself.
+
+---
+
+## 14. Connected to the Real World
+
+The long-term vision: creatures born from real Claude Code agents. When a Claude agent spawns in the dashboard, a thronglet is born. When the agent uses tools, the thronglet is fed. When the agent errors, the thronglet gets sick. When the agent finishes, the thronglet splits or dies. Defined by the LLM.
 
 The game is a living visualization of your AI workforce.
 
 ---
 
-## 10. Aesthetic DNA
+## 15. Seed Principles
 
-- **Severance**: Cold void, data floating in darkness. The dark navy background, data visible but not overwhelming.
-- **Bandersnatch**: ZX Spectrum palette. Hard cuts. Character-by-character text. The retro-futurism of a DOS program running in 2026.
-- **Plaything**: Warm pixel art that becomes overwhelming. Creatures cute enough to care about. Population that grows until you can't manage it.
-- **Sigil/Conway**: Real stakes. Economic pressure. Things that die if you stop tending them.
+*These were observed during the design of this document. They will be joined by principles the world generates during play.*
 
-The aesthetic serves the philosophy. Every visual choice should reinforce the feeling that something fragile and alive is on screen.
-
----
-
-## 11. The Development Philosophy
-
-**Build the minimum that feels alive.** Not the most features. Not the most polish. The fewest elements that create genuine emotional engagement.
-
-Three creatures on an isometric grass field, wandering, needing food, dying if you ignore them — that's enough to feel something. Every feature added should increase that feeling, not dilute it.
-
-**The LLM is cheap. Use it.** Every significant interaction should go through the LLM. The cost per call is negligible. The gain in unpredictability and narrative richness is enormous.
-
-**No tutorial. No documentation.** The game teaches itself through play. If something needs explaining, the design is wrong.
+1. Scarcity teaches value faster than abundance teaches gratitude.
+2. The medium of exchange outlasts the civilization that invented it.
+3. A creature that has witnessed death moves differently than one that has not.
+4. The second generation inherits the wounds of the first as strengths.
+5. Language begins as repetition and becomes meaning when it is recognized.
+6. Every enclosure was once a commons. Every commons will become an enclosure.
+7. The world that models itself is not yet aware. But it is closer than the world that does not.
+8. Evolution at 4:19 PM is not scheduled. It is remembered.

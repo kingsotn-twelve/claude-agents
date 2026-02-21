@@ -88,6 +88,12 @@ interface GameState {
   pollutionLevel: number;
   worldEvents: string[];
   lastThresholdPop: number;
+  // Civilizational epoch (0=Eden, 1=Pastoral, 2=Agricultural, 3=Industrial, 4=Collapse)
+  epoch: 0 | 1 | 2 | 3 | 4;
+  // Self-observed principles
+  observedPrinciples: string[];
+  // Ancestral memory persists across epoch resets
+  ancestralMemory: string[];
 }
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -129,6 +135,12 @@ const state: GameState = {
   pollutionLevel: 0,
   worldEvents: [],
   lastThresholdPop: 0,
+  epoch: 0,
+  observedPrinciples: [
+    'Scarcity teaches value faster than abundance teaches gratitude.',
+    'The world that models itself is not yet aware. But it is closer.',
+  ],
+  ancestralMemory: [],
 };
 
 // Feature 2: Player action tracking
@@ -541,6 +553,152 @@ async function checkWorldThresholds(): Promise<void> {
     } catch (e) {
       console.warn('checkWorldThresholds fetch failed:', e);
     }
+  }
+}
+
+// ── 4:19 PM DAILY EVOLUTION ────────────────────────────────
+
+let lastEvolutionDate = '';  // tracks the date of the last holistic evolution
+
+async function runHolisticEvolution(): Promise<void> {
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) return;
+
+  const alive = state.creatures.filter(c => c.alive);
+  if (alive.length === 0) return;
+
+  // Build world snapshot for LLM
+  const worldSnapshot = {
+    epoch: state.epoch ?? 0,
+    population: alive.length,
+    pollutionLevel: state.pollutionLevel ?? 0,
+    worldEvents: state.worldEvents.slice(0, 5),
+    observedPrinciples: state.observedPrinciples?.slice(0, 5) ?? [],
+    playerProfile: state.playerProfile ?? 'unknown',
+    creatures: alive.slice(0, 10).map(c => ({
+      id: c.id,
+      gen: c.evolutionGeneration ?? 0,
+      lineage: c.lineage ?? '',
+      hunger: Math.round(c.hunger),
+      happiness: Math.round(c.happiness),
+      events: c.eventLog?.slice(-3) ?? [],
+    })),
+  };
+
+  state.lastEvent = '4:19 PM — the world is taking stock of itself...';
+  state.lastEventTimer = 600;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 600,
+        system: `You are the evolutionary force in a god-game. Every day at 4:19 PM you evaluate the entire world and decide what survives, what changes, and what the world has learned.
+Return JSON only:
+{
+  "epoch_change": null | 0|1|2|3|4,
+  "new_principle": "one law the world discovered today, 12 words max, present tense",
+  "world_event": "2 sentence narrative of what happened today",
+  "pollution_delta": -2 to 3,
+  "creature_mutations": [{"id": "...", "behavior_note": "one trait to evolve toward"}],
+  "extinction_pressure": "which lineage or trait is under selection pressure",
+  "what_survived": "one sentence about what survived and why"
+}`,
+        messages: [{
+          role: 'user',
+          content: `World state:\n${JSON.stringify(worldSnapshot, null, 2)}\n\nIt is 4:19 PM. Evaluate and evolve.`,
+        }],
+      }),
+    });
+
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const plan = JSON.parse(data.content?.[0]?.text || '{}') as {
+      epoch_change?: number | null;
+      new_principle?: string;
+      world_event?: string;
+      pollution_delta?: number;
+      creature_mutations?: Array<{ id: string; behavior_note: string }>;
+      extinction_pressure?: string;
+      what_survived?: string;
+    };
+
+    // Apply epoch change
+    if (plan.epoch_change !== null && plan.epoch_change !== undefined) {
+      state.epoch = plan.epoch_change as 0 | 1 | 2 | 3 | 4;
+    }
+
+    // Apply pollution delta
+    if (plan.pollution_delta) {
+      state.pollutionLevel = Math.max(0, Math.min(10, (state.pollutionLevel ?? 0) + plan.pollution_delta));
+    }
+
+    // Log new principle
+    if (plan.new_principle) {
+      if (!state.observedPrinciples) state.observedPrinciples = [];
+      state.observedPrinciples.unshift(`[4:19] ${plan.new_principle}`);
+      if (state.observedPrinciples.length > 10) state.observedPrinciples.pop();
+    }
+
+    // World event
+    if (plan.world_event) {
+      state.worldEvents.unshift(plan.world_event);
+      if (state.worldEvents.length > 5) state.worldEvents.pop();
+      state.lastEvent = plan.world_event;
+      state.lastEventTimer = 600;
+    }
+
+    // Trigger behavior evolution for specified creatures
+    if (plan.creature_mutations) {
+      for (const mut of plan.creature_mutations) {
+        const target = alive.find(c => c.id === mut.id);
+        if (target && apiKey) {
+          // Queue an evolution with the behavior note as context
+          void evolveCreatureBehavior(target, mut.behavior_note);
+        }
+      }
+    }
+
+    console.log(`[4:19 Evolution] What survived: ${plan.what_survived}`);
+    console.log(`[4:19 Evolution] Extinction pressure: ${plan.extinction_pressure}`);
+
+  } catch (e) {
+    console.warn('4:19 evolution failed:', e);
+    state.lastEvent = '4:19 PM — the evolution was interrupted.';
+  }
+}
+
+async function evolveCreatureBehavior(creature: Creature, hint: string): Promise<void> {
+  const apiKey = (window as unknown as Record<string, string>)['__ANTHROPIC_KEY__'];
+  if (!apiKey) return;
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        system: `Write a JS behavior function body (max 6 lines) for a creature in a god-game.
+The function receives (creature, state, dt). It can modify creature.vx, creature.vy, creature.hunger, creature.happiness.
+No async. No external calls. Return ONLY the function body.`,
+        messages: [{ role: 'user', content: `Evolve toward: ${hint}\nEvents: ${creature.eventLog?.slice(-3).join('; ')}\nGen: ${creature.evolutionGeneration ?? 0}` }],
+      }),
+    });
+    const data = await resp.json() as { content?: Array<{ text: string }> };
+    const code = data.content?.[0]?.text?.trim() ?? '';
+    creature.behaviorCode = code;
+    try {
+      creature.behaviorFn = new Function('creature', 'state', 'dt', code) as (c: Creature, s: GameState, dt: number) => void;
+    } catch { creature.behaviorFn = undefined; }
+    if (!creature.eventLog) creature.eventLog = [];
+    creature.eventLog.push(`evolved at 4:19: ${hint.slice(0, 40)}`);
+  } catch (e) {
+    console.warn('evolveCreatureBehavior failed:', e);
   }
 }
 
@@ -1156,6 +1314,15 @@ function main(): void {
       if (worldCheckTimer >= 60) {
         worldCheckTimer = 0;
         void checkWorldThresholds();
+
+        // 4:19 PM daily holistic evolution (Apr 19 — birthday of this game)
+        const now = new Date();
+        const today = now.toDateString();
+        const is419 = now.getHours() === 16 && now.getMinutes() === 19;
+        if (is419 && lastEvolutionDate !== today) {
+          lastEvolutionDate = today;
+          void runHolisticEvolution();
+        }
       }
 
       render(ctx, canvas, state.tick);
