@@ -559,8 +559,8 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     rw = w - lw if split else 0
     rx = lw  # right panel x position
 
-    top_agents = data.get("top_agents", [])
-    top_tools = data.get("top_tools", [])
+    top_agents = cache["data"].get("top_agents", [])
+    top_tools = cache["data"].get("top_tools", [])
 
     # Helpers: clip to panel widths (preserve box borders)
     def L(r, c, text, attr=0):
