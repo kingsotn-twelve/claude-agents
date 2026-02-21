@@ -138,7 +138,7 @@ def query_db(db_path: str) -> dict:
 
         # Completed agents (skip ghosts)
         for row in conn.execute(
-            f"""SELECT agent_id, agent_type, session_id, cwd, started_at, stopped_at
+            f"""SELECT agent_id, agent_type, session_id, cwd, started_at, stopped_at, transcript_path
                 FROM agent
                 WHERE stopped_at IS NOT NULL
                 ORDER BY stopped_at DESC
@@ -1415,8 +1415,10 @@ def main(stdscr):
             agents = state["visible_items"]
             if 0 <= idx < len(agents):
                 item = agents[idx]
-                # Only agents have transcripts to open
-                if not item.get("is_session") and not item.get("is_teammate"):
+                # Agents (running or history) have transcripts to open
+                is_agent = not item.get("is_session") and not item.get("is_teammate")
+                is_history_agent = item.get("is_history") and item.get("kind") == "agent"
+                if is_agent or is_history_agent:
                     short = item["agent_id"][:7]
                     curses.def_prog_mode()
                     curses.endwin()
