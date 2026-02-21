@@ -622,56 +622,90 @@ def life_render(grid, rows, cols, char_w, char_h):
 # ── VISUALIZATION MODES ──────────────────────────────────────
 
 def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
-    """Timeline Gantt: horizontal time, vertical agent tracks with braille sparklines."""
+    """Timeline Gantt: horizontal bars showing duration + parallelism."""
     active_all = cache.get("active_all", [])
     r_agents = cache.get("r_agents", [])
     c_agents = cache.get("c_agents", [])
-    activity = cache.get("activity", {})
+    rw_abs = x + w - 1
 
-    # Collect all tracks: active sessions + their agents + recent completed agents
+    # Pick session scope
+    vis = state.get("visible_items", [])
+    sel = state.get("selected", -1)
+    sel_item = vis[sel] if 0 <= sel < len(vis) else None
+    target_sid = sel_item.get("session_id", "") if sel_item else ""
+    if not target_sid and active_all:
+        target_sid = active_all[0]["session_id"]
+
+    # Collect tracks for this session
     tracks = []
-    for s in active_all:
-        sid = s["session_id"]
-        prompt = short_prompt(s.get("prompt", ""), 15)
-        tracks.append({"id": sid, "label": prompt or sid[:6], "type": "session",
-                       "started_at": s["created_at"], "stopped_at": None, "activity": activity.get(sid, [])})
+    sess = next((s for s in active_all if s["session_id"] == target_sid), None)
+    if sess:
+        tracks.append({"label": short_prompt(sess.get("prompt", ""), 12) or target_sid[:6],
+                       "type": "session", "started_at": sess["created_at"], "stopped_at": None})
     for a in r_agents:
-        atype = a["agent_type"] or "agent"
-        tracks.append({"id": a["agent_id"], "label": atype, "type": "agent",
-                       "started_at": a["started_at"], "stopped_at": None, "activity": activity.get(a.get("session_id", ""), [])})
-    for a in c_agents[:5]:
-        atype = a["agent_type"] or "agent"
-        tracks.append({"id": a["agent_id"], "label": atype, "type": "completed",
-                       "started_at": a["started_at"], "stopped_at": a.get("stopped_at"), "activity": []})
+        if a["session_id"] == target_sid:
+            tracks.append({"label": (a["agent_type"] or "agent")[:12], "type": "agent",
+                           "started_at": a["started_at"], "stopped_at": None})
+    for a in c_agents[:8]:
+        if a["session_id"] == target_sid:
+            tracks.append({"label": (a["agent_type"] or "agent")[:12], "type": "completed",
+                           "started_at": a["started_at"], "stopped_at": a.get("stopped_at")})
 
     if not tracks:
-        safe_add(stdscr, y + 1, x + 2, "no active sessions", w, DIM)
+        safe_add(stdscr, y + 1, x + 2, "select a session", rw_abs, DIM)
         return
 
-    # Time range: last 60s
+    # Compute time range from earliest start to now
     now_utc = datetime.now(timezone.utc)
-    span_secs = 60.0
-    bar_w = w - 20  # space for label + bar
+    try:
+        earliest = min(datetime.fromisoformat(t["started_at"]).replace(tzinfo=timezone.utc) for t in tracks)
+    except Exception:
+        earliest = now_utc
+    span = max(1.0, (now_utc - earliest).total_seconds())
+
+    label_w = 14
+    bar_w = w - label_w - 4
+    if bar_w < 5:
+        return
 
     pr = y
     type_colors = {"session": GREEN, "agent": MAGENTA, "completed": DIM}
+
     for track in tracks:
-        if pr >= y + h:
+        if pr >= y + h - 1:
             break
         color = type_colors.get(track["type"], DIM)
-        label = track["label"][:14].ljust(14)
-        safe_add(stdscr, pr, x + 2, label, x + w - 1, color)
+        label = track["label"][:label_w].ljust(label_w)
+        safe_add(stdscr, pr, x + 2, label, rw_abs, color)
 
-        # Build braille bar from activity buckets (20 buckets of 3s = 60s)
-        buckets = track["activity"]
-        spark = sparkline(buckets, bar_w // 2) if buckets else BRAILLE[0] * (bar_w // 2)
-        safe_add(stdscr, pr, x + 17, spark, x + w - 1, color)
+        # Compute bar position
+        try:
+            t_start = datetime.fromisoformat(track["started_at"]).replace(tzinfo=timezone.utc)
+            t_end = datetime.fromisoformat(track["stopped_at"]).replace(tzinfo=timezone.utc) if track["stopped_at"] else now_utc
+            start_frac = max(0.0, (t_start - earliest).total_seconds() / span)
+            end_frac = min(1.0, (t_end - earliest).total_seconds() / span)
+        except Exception:
+            start_frac, end_frac = 0.0, 1.0
+
+        bar_start = int(start_frac * bar_w)
+        bar_end = max(bar_start + 1, int(end_frac * bar_w))
+
+        # Build the bar: spaces before, blocks during, spaces after
+        bar = "\u2591" * bar_start + "\u2588" * (bar_end - bar_start) + "\u2591" * (bar_w - bar_end)
+        safe_add(stdscr, pr, x + label_w + 2, bar[:bar_w], rw_abs, color)
+
+        # Duration label at end of bar
+        dur = fmt_dur(track["started_at"], track["stopped_at"])
+        safe_add(stdscr, pr, x + label_w + 2 + bar_end + 1, dur, rw_abs, DIM)
         pr += 1
 
-    # Time axis at bottom
+    # Time axis
     if pr < y + h:
-        axis = f"{'-60s':^10}{'-30s':^{bar_w - 10}}{'now':>5}"
-        safe_add(stdscr, pr, x + 17, axis[:bar_w], x + w - 1, DIM)
+        if span < 120:
+            axis_label = f"{'0s':<{bar_w // 2}}{fmt_dur(tracks[0]['started_at']):>{bar_w // 2}}"
+        else:
+            axis_label = f"{'start':<{bar_w // 2}}{'now':>{bar_w // 2}}"
+        safe_add(stdscr, pr, x + label_w + 2, axis_label[:bar_w], rw_abs, DIM)
 
 
 def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
