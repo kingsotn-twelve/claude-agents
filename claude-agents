@@ -1335,7 +1335,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         # -- LIFE panel (below detail, or full right panel) --
         life_y = content_top + detail_h
         life_rh = total_rh - detail_h
-        if state.get("game_of_life") and life_rh >= 4 and active_all:
+        if state.get("game_of_life") and life_rh >= 4:
             # Welcome screen for first 5 seconds
             life_started = state.setdefault("life_started", time.time())
             show_welcome = (time.time() - life_started) < 5.0
@@ -1345,6 +1345,8 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 life_sid = sel_agent["session_id"]
             if not life_sid and active_all:
                 life_sid = active_all[0]["session_id"]
+            if not life_sid:
+                life_sid = "idle"
             if life_sid and show_welcome:
                 wy = life_y + 1
                 # Centered welcome block
