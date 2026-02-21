@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -1159,6 +1159,36 @@ def main(stdscr):
                 state["status_until"] = time.time() + 3
 
 
+def self_update():
+    """Pull latest from GitHub and replace the running script."""
+    import urllib.request
+    raw_url = "https://raw.githubusercontent.com/kingsotn-twelve/claude-agents/main/claude-agents"
+    try:
+        with urllib.request.urlopen(raw_url, timeout=10) as resp:
+            new_src = resp.read().decode()
+    except Exception as e:
+        print(f"update failed: {e}")
+        sys.exit(1)
+    # Extract remote version
+    remote_ver = None
+    for line in new_src.splitlines()[:30]:
+        if line.startswith("VERSION"):
+            remote_ver = line.split('"')[1]
+            break
+    if remote_ver == VERSION:
+        print(f"already up to date (v{VERSION})")
+        return
+    # Overwrite self
+    me = os.path.realpath(sys.argv[0])
+    try:
+        with open(me, "w") as f:
+            f.write(new_src)
+        print(f"updated v{VERSION} → v{remote_ver}")
+    except Exception as e:
+        print(f"write failed: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         prog="claude-agents",
@@ -1170,7 +1200,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--version", action="version", version=f"claude-agents v{VERSION}"
     )
-    parser.parse_args()
+    parser.add_argument(
+        "--update", action="store_true", help="self-update from GitHub"
+    )
+    args = parser.parse_args()
+
+    if args.update:
+        self_update()
+        sys.exit(0)
 
     try:
         curses.wrapper(main)

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.1 — Feb 20, 2026
+
+### Self-update restored
+
+`claude-agents --update` is back. Fetches the latest version from GitHub and replaces the binary in-place.
+
+---
+
 ## v0.5.0 — Feb 20, 2026
 
 ### Task Progress Tracking
