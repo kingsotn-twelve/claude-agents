@@ -734,188 +734,141 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
 
 
 def _draw_viz_graph(stdscr, y, x, h, w, cache, state, frame):
-    """Constellation Graph: force-directed 2D graph scoped to selected session."""
+    """Flow Graph: layered DAG showing prompt → agents → tools → next prompt convergence."""
     active_all = cache.get("active_all", [])
-    r_agents = cache.get("r_agents", [])
-    c_agents = cache.get("c_agents", [])
-    session_tools = cache.get("session_tools", {})
-    tool_events = cache.get("tool_events", {})
-    rw = x + w
+    rw_abs = x + w - 1
 
-    # Pick session: selected, or first active
+    # Pick session
     vis = state.get("visible_items", [])
     sel = state.get("selected", -1)
     sel_item = vis[sel] if 0 <= sel < len(vis) else None
-    target_sid = None
-    if sel_item:
-        target_sid = sel_item.get("session_id", "")
+    target_sid = sel_item.get("session_id", "") if sel_item else ""
     if not target_sid and active_all:
         target_sid = active_all[0]["session_id"]
     if not target_sid:
-        safe_add(stdscr, y + 1, x + 2, "select a session", rw, DIM)
+        safe_add(stdscr, y + 1, x + 2, "select a session", rw_abs, DIM)
         return
 
-    # Build graph for this session
-    nodes = []  # {label, type, x, y}
-    edges = []  # (from_idx, to_idx)
-    node_map = {}
-
-    # Root: session
-    sess = next((s for s in active_all if s["session_id"] == target_sid), None)
-    prompt = short_prompt((sess or {}).get("prompt", ""), 10) or target_sid[:6]
-    node_map["session"] = 0
-    nodes.append({"label": prompt, "type": "session", "x": 0.5, "y": 0.15})
-
-    # Agents under this session (running + recent completed)
-    children = [a for a in r_agents if a["session_id"] == target_sid]
-    completed = [a for a in c_agents if a["session_id"] == target_sid][:5]
-    for a in children + completed:
-        aid = a["agent_id"]
-        atype = a["agent_type"] or "agent"
-        key = f"agent:{aid}"
-        if key not in node_map:
-            idx = len(nodes)
-            node_map[key] = idx
-            nodes.append({"label": atype[:10], "type": "agent", "x": 0.0, "y": 0.0})
-            edges.append((0, idx))  # session -> agent
-
-    # Tools: from session_tools (extended list) or tool_events (recent)
-    tools_list = session_tools.get(target_sid, []) or tool_events.get(target_sid, [])
-    tool_counts = {}
-    for t in tools_list:
-        tname = t["tool_name"]
-        tool_counts[tname] = tool_counts.get(tname, 0) + 1
-
-    for tname, cnt in tool_counts.items():
-        key = f"tool:{tname}"
-        if key not in node_map:
-            idx = len(nodes)
-            node_map[key] = idx
-            label = TOOL_NAMES.get(tname, tname)[:10]
-            nodes.append({"label": f"{label}({cnt})", "type": "tool", "x": 0.0, "y": 0.0})
-            # Connect to agents that used this tool, or to session directly
-            connected = False
-            for a in children + completed:
-                a_tools = session_tools.get(a.get("session_id", ""), [])
-                if any(t["tool_name"] == tname for t in a_tools):
-                    akey = f"agent:{a['agent_id']}"
-                    if akey in node_map:
-                        edges.append((node_map[akey], idx))
-                        connected = True
-            if not connected:
-                edges.append((0, idx))  # fallback: connect to session
-
-    if len(nodes) < 2:
-        safe_add(stdscr, y + 1, x + 2, f"session {target_sid[:7]}: no agents or tools", rw, DIM)
+    # Query conversation turns + agents + tools for this session
+    layers = []  # [{prompt, agents: [{type, tools: [str]}]}]
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        prompts = conn.execute(
+            "SELECT prompt, created_at, seq FROM prompt WHERE session_id = ? ORDER BY seq ASC LIMIT 10",
+            (target_sid,)
+        ).fetchall()
+        agents = conn.execute(
+            "SELECT agent_id, agent_type, started_at, stopped_at FROM agent WHERE session_id = ? ORDER BY started_at ASC",
+            (target_sid,)
+        ).fetchall()
+        tools = conn.execute(
+            "SELECT tool_name, tool_label, created_at FROM tool_event WHERE session_id = ? ORDER BY created_at ASC LIMIT 50",
+            (target_sid,)
+        ).fetchall()
+        conn.close()
+    except Exception:
+        safe_add(stdscr, y + 1, x + 2, "(db error)", rw_abs, DIM)
         return
 
-    # Init or restore positions (keyed by session)
-    graph_state = state.setdefault("graph_state", {})
-    n = len(nodes)
-    gs_key = f"{target_sid}:{n}"
-    if graph_state.get("key") != gs_key:
-        random.seed(hash(target_sid))
-        for i, nd in enumerate(nodes):
-            if nd["x"] == 0.0:
-                nd["x"] = random.uniform(0.15, 0.85)
-                nd["y"] = random.uniform(0.15, 0.85)
-        graph_state["key"] = gs_key
-        graph_state["positions"] = [(nd["x"], nd["y"]) for nd in nodes]
-        random.seed()
-    else:
-        for i, (px, py) in enumerate(graph_state["positions"]):
-            if i < len(nodes):
-                nodes[i]["x"] = px
-                nodes[i]["y"] = py
+    if not prompts:
+        safe_add(stdscr, y + 1, x + 2, f"session {target_sid[:7]}: no data", rw_abs, DIM)
+        return
 
-    # Force-directed step
-    fx = [0.0] * n
-    fy = [0.0] * n
-    # Repulsion
-    for i in range(n):
-        for j in range(i + 1, n):
-            dx = nodes[i]["x"] - nodes[j]["x"]
-            dy = nodes[i]["y"] - nodes[j]["y"]
-            dist = max(0.01, (dx * dx + dy * dy) ** 0.5)
-            force = 0.005 / (dist * dist)
-            fx[i] += dx / dist * force
-            fy[i] += dy / dist * force
-            fx[j] -= dx / dist * force
-            fy[j] -= dy / dist * force
-    # Attraction along edges
-    for ei, ej in edges:
-        if ei >= n or ej >= n:
-            continue
-        dx = nodes[ej]["x"] - nodes[ei]["x"]
-        dy = nodes[ej]["y"] - nodes[ei]["y"]
-        dist = max(0.01, (dx * dx + dy * dy) ** 0.5)
-        force = dist * 0.3
-        fx[ei] += dx * force
-        fy[ei] += dy * force
-        fx[ej] -= dx * force
-        fy[ej] -= dy * force
-    # Apply forces
-    for i in range(n):
-        nodes[i]["x"] = max(0.05, min(0.95, nodes[i]["x"] + fx[i] * 0.1))
-        nodes[i]["y"] = max(0.05, min(0.95, nodes[i]["y"] + fy[i] * 0.1))
-    graph_state["positions"] = [(nd["x"], nd["y"]) for nd in nodes]
+    # Build layers: assign agents and tools to their prompt turn by timestamp
+    for pi, p in enumerate(prompts):
+        turn_start = p["created_at"]
+        turn_end = prompts[pi + 1]["created_at"] if pi + 1 < len(prompts) else "9999-12-31"
+        turn_agents = []
+        for a in agents:
+            if turn_start <= a["started_at"] < turn_end:
+                atype = a["agent_type"] or "agent"
+                # Tools used by this agent (approximate: tools during agent lifetime)
+                a_start = a["started_at"]
+                a_end = a["stopped_at"] or "9999-12-31"
+                a_tools = [friendly_tool(t["tool_name"], t["tool_label"])
+                           for t in tools if a_start <= t["created_at"] <= a_end]
+                turn_agents.append({"type": atype, "tools": a_tools[:3]})
+        # Direct tools (not during any agent)
+        direct_tools = []
+        for t in tools:
+            if turn_start <= t["created_at"] < turn_end:
+                in_agent = any(a["started_at"] <= t["created_at"] <= (a["stopped_at"] or "9999-12-31") for a in agents)
+                if not in_agent:
+                    direct_tools.append(friendly_tool(t["tool_name"], t["tool_label"]))
+        prompt_text = short_prompt(p["prompt"], w - 8) or f"turn {p['seq']}"
+        layers.append({"prompt": prompt_text, "agents": turn_agents, "tools": direct_tools[:3]})
 
-    # Render as text-based graph with box-drawing edges
-    rw_abs = x + w - 1
-    area_w = w - 6  # usable width inside box
-    area_h = h - 2  # usable height (leave room for legend)
-
-    # Map node positions to screen coordinates
+    # Render top-to-bottom flow
+    pr = y
+    mid = x + w // 2
     type_icons = {"session": "\u25c9", "agent": "\u25c8", "tool": "\u25cb"}
-    type_colors = {"session": GREEN, "agent": MAGENTA, "tool": YELLOW}
 
-    screen_pos = []
-    for nd in nodes:
-        sx = x + 3 + int(nd["x"] * (area_w - 1))
-        sy = y + int(nd["y"] * (area_h - 1))
-        screen_pos.append((sx, sy))
+    for li, layer in enumerate(layers):
+        if pr >= y + h - 1:
+            break
 
-    # Draw edges first (behind nodes)
-    for ei, ej in edges:
-        if ei >= n or ej >= n:
-            continue
-        sx1, sy1 = screen_pos[ei]
-        sx2, sy2 = screen_pos[ej]
-        # Draw line using box chars
-        steps = max(abs(sx2 - sx1), abs(sy2 - sy1), 1)
-        for s in range(1, steps):  # skip endpoints
-            px = sx1 + (sx2 - sx1) * s // steps
-            py = sy1 + (sy2 - sy1) * s // steps
-            if y <= py < y + h:
-                dx = sx2 - sx1
-                dy = sy2 - sy1
-                if abs(dx) > abs(dy) * 2:
-                    ch = "\u2500"  # ─
-                elif abs(dy) > abs(dx) * 2:
-                    ch = "\u2502"  # │
-                elif (dx > 0) == (dy > 0):
-                    ch = "\u2572"  # ╲
-                else:
-                    ch = "\u2571"  # ╱
-                safe_add(stdscr, py, px, ch, rw_abs, DIM)
+        # Prompt node (centered)
+        plabel = layer["prompt"][:w - 6]
+        px = mid - len(plabel) // 2 - 1
+        safe_add(stdscr, pr, px, f"\u25c9 {plabel}", rw_abs, GREEN)
+        prompt_row = pr
+        pr += 1
 
-    # Draw nodes + labels
-    for i, nd in enumerate(nodes):
-        sx, sy = screen_pos[i]
-        if y <= sy < y + h:
-            icon = type_icons.get(nd["type"], "\u25cb")
-            color = type_colors.get(nd["type"], DIM)
-            safe_add(stdscr, sy, sx, icon, rw_abs, color)
-            # Label to the right of node
-            label = nd["label"][:area_w // 3]
-            safe_add(stdscr, sy, sx + 2, label, rw_abs, color)
+        # Fan-out: agents + direct tools spread horizontally
+        children = []
+        for a in layer["agents"]:
+            children.append(("agent", a["type"], a["tools"]))
+        for t in layer["tools"]:
+            children.append(("tool", t, []))
 
-    # Legend at bottom
-    leg_y = y + h - 1
-    if leg_y > y:
-        safe_add(stdscr, leg_y, x + 2, "\u25c9 session", rw_abs, GREEN)
-        safe_add(stdscr, leg_y, x + 14, "\u25c8 agent", rw_abs, MAGENTA)
-        safe_add(stdscr, leg_y, x + 24, "\u25cb tool", rw_abs, YELLOW)
+        if children and pr < y + h - 1:
+            n_kids = len(children)
+            spacing = max(1, (w - 8) // max(n_kids, 1))
+            start_x = x + 4
+
+            for ci, (ctype, clabel, ctools) in enumerate(children):
+                if pr >= y + h - 1:
+                    break
+                cx = start_x + ci * spacing
+                icon = type_icons.get(ctype, "\u25cb")
+                color = MAGENTA if ctype == "agent" else YELLOW
+
+                # Draw connection line from prompt
+                if prompt_row + 1 == pr:
+                    # Diagonal connector from center prompt to child position
+                    if cx < mid:
+                        safe_add(stdscr, pr, cx, "\u2571", rw_abs, DIM)  # ╱
+                    elif cx > mid:
+                        safe_add(stdscr, pr, cx, "\u2572", rw_abs, DIM)  # ╲
+                    else:
+                        safe_add(stdscr, pr, cx, "\u2502", rw_abs, DIM)  # │
+
+                pr_child = pr + 1 if prompt_row + 1 == pr else pr
+                if pr_child < y + h:
+                    safe_add(stdscr, pr_child, cx, f"{icon} {clabel[:spacing - 3]}", rw_abs, color)
+
+                    # Tool leaves under agent
+                    for ti, tl in enumerate(ctools):
+                        if pr_child + 1 + ti >= y + h:
+                            break
+                        conn = "\u2514" if ti == len(ctools) - 1 else "\u251c"
+                        safe_add(stdscr, pr_child + 1 + ti, cx + 1, f"{conn} {tl[:spacing - 5]}", rw_abs, DIM)
+
+            pr = pr_child + 1 + max((len(c[2]) for c in children), default=0)
+        else:
+            pr += 1
+
+        # Convergence lines to next prompt (if not last layer)
+        if li < len(layers) - 1 and pr < y + h - 1:
+            safe_add(stdscr, pr, mid, "\u2502", rw_abs, DIM)  # │
+            pr += 1
+
+    # Legend
+    if pr < y + h:
+        safe_add(stdscr, y + h - 1, x + 2, "\u25c9 prompt", rw_abs, GREEN)
+        safe_add(stdscr, y + h - 1, x + 13, "\u25c8 agent", rw_abs, MAGENTA)
+        safe_add(stdscr, y + h - 1, x + 23, "\u25cb tool", rw_abs, YELLOW)
 
 
 def _progress_bar(done, in_progress, total, width=5):
