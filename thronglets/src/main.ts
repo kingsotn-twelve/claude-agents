@@ -657,6 +657,25 @@ function runInteractionSystem(): void {
       }
     }
   }
+
+  // Creature near dead tree + has bones resource → plant sapling from bones
+  for (const c of alive) {
+    if ((state.resources.bones ?? 0) < 1) continue;
+    for (const tree of state.trees) {
+      if (tree.health > 0) continue;
+      const dist = Math.sqrt((c.x - tree.x)**2 + (c.y - tree.y)**2);
+      const boneKey = `plant_${Math.round(tree.x)}_${Math.round(tree.y)}`;
+      if (dist < 1.5 && checkInteractionGates(c, { id: boneKey }, dist, 1.5, 1200)) {
+        setCooldown(c.id ?? '', boneKey);
+        state.resources.bones = Math.max(0, (state.resources.bones ?? 0) - 1);
+        tree.health = 1;
+        tree.regrowTimer = 0;
+        c.eventLog = [...(c.eventLog ?? []), 'planted a tree from bones'].slice(-10);
+        state.lastEvent = `${c.lineage?.slice(0,4)} planted a tree using bones`;
+        state.lastEventTimer = 200;
+      }
+    }
+  }
 }
 
 // ── PERSISTENT WORLD STATE (IndexedDB) ────────────────────
@@ -1411,16 +1430,38 @@ Define the outcome. Return JSON:
 
 function updateTrees(dt: number): void {
   for (const tree of state.trees) {
-    if (tree.health <= 0) continue;
+    // Dead tree regrow logic
+    if (tree.health <= 0) {
+      // Regrow only if pollution is manageable
+      const regrowRate = Math.max(0, 1 - (state.pollutionLevel ?? 0) / 10);
+      if (regrowRate > 0) {
+        tree.regrowTimer = (tree.regrowTimer || 0) + dt * regrowRate;
+        if (tree.regrowTimer >= 2400) {  // ~40 seconds to regrow
+          tree.regrowTimer = 0;
+          tree.health = 1;  // regrow with 1 health
+        }
+      }
+      continue;  // don't drop food from dead trees
+    }
+
+    // Healthy tree food drops
     tree.regrowTimer = (tree.regrowTimer || 0) + dt;
     if (tree.regrowTimer >= 800) {
       tree.regrowTimer = 0;
-      // Drop an apple near the tree
       state.food.push(createFood(
         tree.x + (Math.random() - 0.5) * 1.5,
         tree.y + (Math.random() - 0.5) * 1.5
       ));
     }
+  }
+
+  // World naturally spawns a new tree if total healthy trees < 4
+  const healthyTrees = state.trees.filter(t => t.health > 0).length;
+  if (healthyTrees < 4 && state.tick % 3600 === 0 && Math.random() < 0.5) {
+    state.trees.push(createTree(
+      2 + Math.random() * (WORLD_W - 4),
+      2 + Math.random() * (WORLD_H - 4)
+    ));
   }
 }
 
@@ -1532,6 +1573,10 @@ function updateObserver(dt: number): void {
       `lineage: ${c.lineage ?? '??'}  state: ${c.state}`,
     ];
 
+    // Show real-agent badge if this thronglet was born from a Claude Code agent
+    const agentBorn = c.eventLog?.find(e => e.includes('born as'));
+    if (agentBorn) obs.targetDetail.push(`[real agent] ${agentBorn}`);
+
     // LLM hover comment — generate once per creature, refresh after 120 ticks
     obs.hoverCommentAge = (obs.hoverCommentAge || 0) + dt;
     if (obs.hoverCommentAge > 120 || obs.hoverComment === '' || !obs.hoverComment.includes(c.id?.slice(0, 4) ?? '')) {
@@ -1593,7 +1638,14 @@ function updateCreature(c: Creature, dt: number): void {
   if (!c.alive) return;
 
   c.age += dt;
-  c.hunger = Math.max(0, c.hunger - dt * 0.03);
+
+  // Population pressure increases hunger drain when overcrowded
+  const alivePop = state.creatures.filter(cr => cr.alive).length;
+  const healthyTreeCount = state.trees.filter(t => t.health > 0).length;
+  const carryingCapacity = Math.max(5, healthyTreeCount * 4);
+  const hungerPressure = alivePop > carryingCapacity * 1.5 ? 2.0 : 1.0;
+
+  c.hunger = Math.max(0, c.hunger - dt * 0.03 * hungerPressure);
   c.clean = Math.max(0, c.clean - dt * 0.02);
   c.happiness = Math.max(0, c.happiness - dt * 0.015);
   c.bobPhase += dt * 0.1;
@@ -1621,29 +1673,35 @@ function updateCreature(c: Creature, dt: number): void {
     c.happiness = Math.min(100, c.happiness + dt * 0.3);
   }
 
-  // Split when happy enough for long enough
+  // Split when happy enough for long enough — with density pressure
   if (c.happiness > 70 && c.hunger > 50 && c.clean > 50) {
-    c.splitTimer += dt;
-    if (c.splitTimer > 500) {
+    const foodAvailable = state.food.filter(f => !f.eaten).length;
+    const densityPressure = Math.max(0.1, 1 - (alivePop / carryingCapacity));
+
+    c.splitTimer += dt * densityPressure;  // slower splits when crowded
+    if (c.splitTimer > (500 / densityPressure)) {  // harder threshold when overcrowded
       c.splitTimer = 0;
-      const newC = createCreature(
-        c.x + (Math.random() - 0.5) * 3,
-        c.y + (Math.random() - 0.5) * 3
-      );
-      newC.hunger = 60;
-      newC.clean = 80;
-      newC.happiness = 80;
-      // Copy parent event log
-      newC.eventLog = [...(c.eventLog || [])];
-      // Inherit lineage with slight drift — one char mutates over generations
-      const parentLineage = c.lineage ?? Math.random().toString(36).slice(2, 6);
-      const mutPos = Math.floor(Math.random() * parentLineage.length);
-      const mutChar = Math.random().toString(36).slice(2, 3);
-      newC.lineage = parentLineage.slice(0, mutPos) + mutChar + parentLineage.slice(mutPos + 1);
-      newC.evolutionGeneration = (c.evolutionGeneration ?? 0) + 1;
-      state.creatures.push(newC);
-      // Feature 1: Evolve behavior for naturally-split child
-      void evolveChildBehavior(c, newC);
+      // Only split if food exists or population is critically low
+      if (foodAvailable > 0 || alivePop < 3) {
+        const newC = createCreature(
+          c.x + (Math.random() - 0.5) * 3,
+          c.y + (Math.random() - 0.5) * 3
+        );
+        newC.hunger = 60;
+        newC.clean = 80;
+        newC.happiness = 80;
+        // Copy parent event log
+        newC.eventLog = [...(c.eventLog || [])];
+        // Inherit lineage with slight drift — one char mutates over generations
+        const parentLineage = c.lineage ?? Math.random().toString(36).slice(2, 6);
+        const mutPos = Math.floor(Math.random() * parentLineage.length);
+        const mutChar = Math.random().toString(36).slice(2, 3);
+        newC.lineage = parentLineage.slice(0, mutPos) + mutChar + parentLineage.slice(mutPos + 1);
+        newC.evolutionGeneration = (c.evolutionGeneration ?? 0) + 1;
+        state.creatures.push(newC);
+        // Feature 1: Evolve behavior for naturally-split child
+        void evolveChildBehavior(c, newC);
+      }
     }
   }
 
@@ -2059,8 +2117,12 @@ function drawObserver(ctx: CanvasRenderingContext2D, w: number, h: number): void
   // WORLD section
   lines.push({ text: 'WORLD', color: '#6688cc' });
   const alive = state.creatures.filter(c => c.alive).length;
+  const healthyTrees = state.trees.filter(t => t.health > 0).length;
+  const carryingCap = Math.max(5, healthyTrees * 4);
+  const stability = Math.round((Math.min(alive, carryingCap) / carryingCap) * 100);
   lines.push({ text: `> ${epochName(state.epoch ?? 0)} · pop ${alive}`, color: '#aabbee' });
   lines.push({ text: `  pollution ${state.pollutionLevel ?? 0}/10 · bones ${state.resources.bones}`, color: '#6677aa', dim: true });
+  lines.push({ text: `  trees ${healthyTrees} · cap ${carryingCap} · stable ${stability}%`, color: '#6677aa', dim: true });
   if (state.observedPrinciples?.length) {
     lines.push({ text: '', color: '' });
     lines.push({ text: 'LAWS', color: '#6688cc' });
@@ -2349,6 +2411,19 @@ async function syncClaudeAgents(): Promise<void> {
   }
 }
 
+// ── COMPUTE TIER HELPERS ───────────────────────────────────
+
+function getLLMModel(): string {
+  if (state.computeBudget > 3000) return 'claude-haiku-4-5-20251001';
+  return ''; // fallback to deterministic when very low
+}
+
+function getMaxTokens(): number {
+  if (state.computeBudget > 15000) return 200;
+  if (state.computeBudget > 3000) return 80;  // shorter responses when low
+  return 0;
+}
+
 // ── MAIN ───────────────────────────────────────────────────
 
 function main(): void {
@@ -2433,6 +2508,17 @@ function main(): void {
       worldCheckTimer += dt;
       if (worldCheckTimer >= 60) {
         worldCheckTimer = 0;
+
+        // Passive compute refill — world runs without god approval
+        const baseRefill = 200;  // always refills at least 200 tokens/5s
+        const approvalRefill = Math.floor(state.computeRating / 10) * 100;
+        state.computeBudget = Math.min(50000, state.computeBudget + baseRefill + approvalRefill);
+
+        // Pollution self-regulation — nature heals slowly
+        if ((state.pollutionLevel ?? 0) > 0) {
+          state.pollutionLevel = Math.max(0, (state.pollutionLevel ?? 0) - 0.01);
+        }
+
         void checkWorldThresholds();
 
         // Auto-update epoch based on population
@@ -2459,6 +2545,11 @@ function main(): void {
             void generateCreatureProposal(randomCreature);
           }
         }
+      }
+
+      // Sync real Claude Code agents to thronglets every 30 seconds (~1800 frames)
+      if (state.tick % 1800 === 0) {
+        void syncClaudeAgents();
       }
 
       render(ctx, canvas, state.tick);
