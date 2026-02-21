@@ -605,11 +605,14 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, teams, top_agents
             pr += 1
 
     else:
-        # Stats: team metrics + agent type ranking + tool ranking
+        # Stats view: team metrics, live activity, agent/tool rankings
         def _bar(val: int, max_val: int, bw: int = 8) -> str:
             filled = int(val / max_val * bw) if max_val > 0 else 0
             return "\u2588" * filled + "\u2591" * (bw - filled)
 
+        has_content = False
+
+        # Team metrics
         if teams and pr < max_row - 3:
             for team in teams:
                 if pr >= max_row - 1:
@@ -621,6 +624,7 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, teams, top_agents
                 t_total = len(tl)
                 P(pr, col, f"TEAMS  {team['name']}", CYAN)
                 pr += 1
+                has_content = True
                 if t_total > 0:
                     bar = _progress_bar(t_done, t_active, t_total, 10)
                     summary = f"{bar} {t_total} task{'s' if t_total != 1 else ''}  {t_done} done  {t_active} active  {t_pending} pending"
@@ -642,28 +646,67 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, teams, top_agents
                     pr += 1
                 pr += 1
 
-        P(pr, col, "AGENTS  7d", CYAN)
-        pr += 1
-        max_a = top_agents[0]["cnt"] if top_agents else 1
-        tag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_agents), default=0)
-        type_w = max((len(e["agent_type"] or "?") for e in top_agents), default=0)
-        for entry in top_agents:
-            if pr >= max_row:
-                break
-            tag = dir_tag(entry.get("cwd", ""))
-            atype = entry["agent_type"] or "?"
-            cnt = entry["cnt"]
-            bar = _bar(cnt, max_a)
-            col1 = tag.ljust(tag_w)
-            col2 = atype.ljust(type_w)
-            P(pr, col, f"{col1}  {col2}  {bar} {cnt}", DIM)
+        # Live session activity (recent tool events from active sessions)
+        active_all = cache.get("active_all", [])
+        tool_events = cache.get("tool_events", {})
+        if active_all and pr < max_row - 2:
+            P(pr, col, "LIVE", CYAN)
+            pr += 1
+            has_content = True
+            for s in active_all:
+                if pr >= max_row:
+                    break
+                sid = s["session_id"]
+                waiting = bool(s.get("lastWaitUserAt"))
+                prompt = short_prompt(s.get("prompt"), pw - 20)
+                sid_short = short_session(sid)
+                dur = fmt_dur(s["created_at"])
+                status_icon = "\u25cb" if waiting else "\u25cf"
+                status_color = DIM if waiting else GREEN
+                P(pr, col, status_icon, status_color)
+                P(pr, col + 2, f"{dur:>5}", YELLOW)
+                P(pr, col + 8, sid_short, DIM)
+                P(pr, col + 15, prompt or "(no prompt)", DIM if waiting else WHITE)
+                pr += 1
+                # Show recent tools for this session
+                if sid in tool_events and pr < max_row:
+                    tools = tool_events[sid]
+                    parts = []
+                    for t in tools:
+                        name = t["tool_name"]
+                        label = t["tool_label"]
+                        parts.append(f"{name}\u2192{label}" if label and label != name else name)
+                    P(pr, col + 2, "\u2514 " + "  ".join(parts)[:pw - 4], DIM)
+                    pr += 1
             pr += 1
 
-        pr += 1
-        if top_tools and pr < max_row - 1:
+        # Agent type rankings (7d)
+        if top_agents and pr < max_row - 2:
+            P(pr, col, "AGENTS  7d", CYAN)
+            pr += 1
+            has_content = True
+            max_a = top_agents[0]["cnt"]
+            tag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_agents), default=0)
+            type_w = max((len(e["agent_type"] or "?") for e in top_agents), default=0)
+            for entry in top_agents:
+                if pr >= max_row:
+                    break
+                tag = dir_tag(entry.get("cwd", ""))
+                atype = entry["agent_type"] or "?"
+                cnt = entry["cnt"]
+                bar = _bar(cnt, max_a)
+                col1 = tag.ljust(tag_w)
+                col2 = atype.ljust(type_w)
+                P(pr, col, f"{col1}  {col2}  {bar} {cnt}", DIM)
+                pr += 1
+            pr += 1
+
+        # Tool rankings (7d)
+        if top_tools and pr < max_row - 2:
             P(pr, col, "TOOLS   7d", CYAN)
             pr += 1
-            max_t = top_tools[0]["cnt"] if top_tools else 1
+            has_content = True
+            max_t = top_tools[0]["cnt"]
             ttag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_tools), default=0)
             tname_w = max((len(e["tool_name"] or "?") for e in top_tools), default=0)
             for entry in top_tools:
@@ -677,6 +720,16 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, teams, top_agents
                 col2 = tname.ljust(tname_w)
                 P(pr, col, f"{col1}  {col2}  {bar} {cnt}", DIM)
                 pr += 1
+
+        # Empty state
+        if not has_content:
+            P(pr, col, "no active sessions", DIM)
+            pr += 2
+            P(pr, col, "j/k  select agent", DIM)
+            pr += 1
+            P(pr, col, "esc  deselect", DIM)
+            pr += 1
+            P(pr, col, "ret  open in iTerm2", DIM)
 
 
 def draw(stdscr, frame: int, state: dict, cache: dict):
