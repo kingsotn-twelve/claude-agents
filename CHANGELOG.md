@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.2 — Feb 20, 2026
+
+### Inline DETAIL panel
+
+On narrow terminals (< 100 cols), selecting a teammate or agent now shows the DETAIL panel inline — replacing the HISTORY panel — instead of showing nothing. Press Esc to deselect and get HISTORY back.
+
+---
+
 ## v0.5.1 — Feb 20, 2026
 
 ### Self-update restored
