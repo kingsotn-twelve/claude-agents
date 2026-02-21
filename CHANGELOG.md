@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.7.1 — Feb 20, 2026
+
+### Vim-like panel navigation
+
+Every panel is now navigable. `j`/`k` moves through TEAMS, SESSIONS, HISTORY, and STATS as one continuous list. The active panel highlights with a cyan border. `l` or `Enter` focuses the DETAIL panel for scrolling, `h` or `Esc` returns. When on a stats row, `h`/`l` always cycles the time range instead of entering detail.
+
+### Orphan agent reaper
+
+Agents whose parent session has stopped are now automatically cleaned up from the DB, preventing ghost entries from accumulating.
+
+---
+
 ## v0.7.0 — Feb 20, 2026
 
 ### DETAIL panel navigation
