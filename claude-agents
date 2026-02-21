@@ -1347,14 +1347,20 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 life_sid = active_all[0]["session_id"]
             if life_sid and show_welcome:
                 wy = life_y + 1
-                R(wy, rx + 2, "CONWAY'S GAME OF LIFE", CYAN | curses.A_BOLD); wy += 2
-                R(wy, rx + 2, "Each cell lives or dies by 3 rules:", DIM); wy += 1
-                R(wy, rx + 2, "  1. < 2 neighbors  \u2192  dies  (lonely)", DIM); wy += 1
-                R(wy, rx + 2, "  2. 2-3 neighbors  \u2192  lives (happy)", DIM); wy += 1
-                R(wy, rx + 2, "  3. > 3 neighbors  \u2192  dies  (crowded)", DIM); wy += 1
-                R(wy, rx + 2, "  4. dead + 3 nbrs  \u2192  born  (new life)", DIM); wy += 2
-                R(wy, rx + 2, f"Seed: {life_sid[:7]}  (from your prompt)", YELLOW); wy += 1
-                R(wy, rx + 2, "Each session gets a unique universe.", DIM)
+                # Centered welcome block
+                lines_w = [
+                    ("GAME OF LIFE", CYAN | curses.A_BOLD),
+                    ("", DIM),
+                    ("Cells live, die, or spawn by neighbor count.", DIM),
+                    (f"Seed: {life_sid[:7]}", YELLOW),
+                ]
+                cy = life_y + max(0, (life_rh - len(lines_w)) // 2)
+                for text, attr in lines_w:
+                    if cy >= life_y + life_rh:
+                        break
+                    cx = rx + max(2, (rw - len(text)) // 2)
+                    safe_add(stdscr, cy, cx, text, rx + rw - 1, attr)
+                    cy += 1
             elif life_sid:
                 char_w = rw - 4
                 char_h = life_rh - 1
