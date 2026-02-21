@@ -52,13 +52,13 @@ cat > "$TASKS_DIR/1.json" <<JSON
 {"id":"1","subject":"Research API design patterns","status":"completed","owner":"researcher"}
 JSON
 cat > "$TASKS_DIR/2.json" <<JSON
-{"id":"2","subject":"Implement auth endpoints","status":"in_progress","owner":"implementer"}
+{"id":"2","subject":"Implement auth endpoints","status":"in_progress","activeForm":"Implementing auth endpoints","owner":"implementer"}
 JSON
 cat > "$TASKS_DIR/3.json" <<JSON
-{"id":"3","subject":"Write unit tests","status":"in_progress","owner":"implementer"}
+{"id":"3","subject":"Write unit tests","status":"pending","owner":"reviewer","blockedBy":["2"]}
 JSON
 cat > "$TASKS_DIR/4.json" <<JSON
-{"id":"4","subject":"Code review PR #42","status":"pending","owner":""}
+{"id":"4","subject":"Code review PR #42","status":"in_progress","activeForm":"Reviewing PR #42","owner":"reviewer"}
 JSON
 cat > "$TASKS_DIR/5.json" <<JSON
 {"id":"5","subject":"Update docs","status":"pending","owner":""}
@@ -76,12 +76,15 @@ echo ""
 
 # 4. Simulate task progress mid-way through
 sleep "$((DURATION / 2))"
-echo "→ marking task 2 complete..."
+echo "→ marking task 2 complete, unblocking task 3..."
 cat > "$TASKS_DIR/2.json" <<JSON
 {"id":"2","subject":"Implement auth endpoints","status":"completed","owner":"implementer"}
 JSON
+cat > "$TASKS_DIR/3.json" <<JSON
+{"id":"3","subject":"Write unit tests","status":"in_progress","activeForm":"Writing unit tests","owner":"implementer"}
+JSON
 cat > "$TASKS_DIR/4.json" <<JSON
-{"id":"4","subject":"Code review PR #42","status":"in_progress","owner":"reviewer"}
+{"id":"4","subject":"Code review PR #42","status":"completed","owner":"reviewer"}
 JSON
 
 sleep "$((DURATION / 2))"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 claude-agents — live terminal dashboard for Claude Code sessions & agents.
-Tree view: agents nested under sessions, tool feed for agentless sessions.
+btop-style TUI with rounded box panels, braille sparklines, and tree views.
 Run in a separate pane: claude-agents
 """
 
@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -26,6 +26,31 @@ MAX_COMPLETED_AGENTS = 10
 MAX_HISTORY = 20
 MAX_TOOL_EVENTS = 3  # tools shown per agentless session
 
+# ── CONSTANTS & SYMBOLS ──────────────────────────────────────
+
+SYMBOLS = {"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": "│", "lt": "├", "rt": "┤"}
+BRAILLE = "⠀⠂⠄⠆⠈⠐⠒⠔⠖⠘⠠⠢⠤⠦⠨⠰⠲⠴⠶⠸⡀⡂⡄⡆⡈"
+
+GREEN = CYAN = YELLOW = DIM = MAGENTA = WHITE = RED = 0
+
+
+def init_colors():
+    global GREEN, CYAN, YELLOW, DIM, MAGENTA, WHITE, RED
+    curses.start_color()
+    curses.use_default_colors()
+    for i, c in enumerate([curses.COLOR_GREEN, curses.COLOR_WHITE, curses.COLOR_CYAN,
+                           curses.COLOR_YELLOW, 8, curses.COLOR_MAGENTA, curses.COLOR_RED], 1):
+        curses.init_pair(i, c, -1)
+    GREEN = curses.color_pair(1) | curses.A_BOLD
+    WHITE = curses.color_pair(2)
+    CYAN = curses.color_pair(3) | curses.A_BOLD
+    YELLOW = curses.color_pair(4) | curses.A_BOLD
+    DIM = curses.color_pair(5)
+    MAGENTA = curses.color_pair(6) | curses.A_BOLD
+    RED = curses.color_pair(7) | curses.A_BOLD
+
+
+# ── DATA QUERIES ─────────────────────────────────────────────
 
 def query_db(db_path: str) -> dict:
     data = {
@@ -36,6 +61,7 @@ def query_db(db_path: str) -> dict:
         "tool_events": {},  # session_id -> [{tool_name, tool_label}]
         "top_agents": [],
         "top_tools": [],
+        "activity": {},
     }
     if not os.path.exists(db_path):
         return data
@@ -118,6 +144,27 @@ def query_db(db_path: str) -> dict:
             if tools:
                 # Reverse so oldest is first (left-to-right reading)
                 data["tool_events"][sid] = list(reversed(tools))
+
+        # Activity buckets for sparklines (last 60s, 20 buckets of 3s each)
+        for sid in active_sids:
+            try:
+                rows = conn.execute(
+                    "SELECT created_at FROM tool_event WHERE session_id = ? AND created_at > datetime('now', '-60 seconds')",
+                    (sid,)).fetchall()
+                buckets = [0] * 20
+                now_utc = datetime.now(timezone.utc)
+                for (ts_str,) in rows:
+                    try:
+                        ts = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
+                        age = (now_utc - ts).total_seconds()
+                        slot = int(age / 3)
+                        if 0 <= slot < 20:
+                            buckets[19 - slot] += 1
+                    except Exception:
+                        pass
+                data["activity"][sid] = buckets
+            except Exception:
+                pass
 
         # Usage stats: top agent types + top tools (last 7 days)
         try:
@@ -234,6 +281,8 @@ def query_teams(db_path: str, active_session_ids: set[str]) -> dict:
 
     return result
 
+
+# ── FORMATTERS ───────────────────────────────────────────────
 
 def dir_tag(cwd: str) -> str:
     """Return a short [dirname] prefix from a cwd path."""
@@ -385,45 +434,111 @@ def safe_add(stdscr, row: int, col: int, text: str, width: int, attr=0):
         pass
 
 
-def draw(stdscr, frame: int, state: dict):
+# ── BRAILLE GRAPH ────────────────────────────────────────────
+
+def sparkline(buckets, width=10):
+    n = width * 2
+    vals = ([0] * max(0, n - len(buckets)) + buckets)[-n:]
+    mx = max(vals) if vals else 0
+    if mx == 0:
+        return BRAILLE[0] * width
+    norm = [min(4, int(v / mx * 4.99)) if v > 0 else 0 for v in vals]
+    return "".join(BRAILLE[norm[i] * 5 + norm[i + 1]] for i in range(0, n, 2))
+
+
+def _progress_bar(done, in_progress, total, width=5):
+    """Build a compact progress bar: █ for done, ▓ for in_progress, ░ for remaining."""
+    if total <= 0:
+        return "░" * width
+    filled = int(done / total * width)
+    active = int(in_progress / total * width)
+    # Ensure at least 1 char for in_progress if any exist
+    if in_progress > 0 and active == 0 and filled < width:
+        active = 1
+    remaining = width - filled - active
+    return "█" * filled + "▓" * active + "░" * max(0, remaining)
+
+
+def member_status(activity_buckets, session):
+    """Return (icon, color) based on member activity."""
+    recent = activity_buckets[-5:] if activity_buckets else []
+    has_recent_tools = any(b > 0 for b in recent)
+    waiting = bool(session.get("lastWaitUserAt"))
+    if has_recent_tools:
+        return ("◉", GREEN)
+    elif waiting:
+        return ("○", DIM)
+    else:
+        return ("◎", YELLOW)
+
+
+# ── BOX DRAWING ──────────────────────────────────────────────
+
+def draw_box(stdscr, y, x, h, w, title="", title_attr=0, border_attr=0):
+    if h < 2 or w < 2:
+        return
+    ba = border_attr or DIM
+    ta = title_attr or CYAN
+    top = SYMBOLS["tl"] + SYMBOLS["h"] * (w - 2) + SYMBOLS["tr"]
+    if title:
+        label = f" {title} "
+        if len(label) + 2 < w:
+            top = top[:2] + label + top[2 + len(label):]
+    safe_add(stdscr, y, x, top, x + w, ba)
+    if title:
+        safe_add(stdscr, y, x + 2, f" {title} ", x + w, ta)
+    for row in range(y + 1, y + h - 1):
+        safe_add(stdscr, row, x, SYMBOLS["v"], x + w, ba)
+        safe_add(stdscr, row, x + w - 1, SYMBOLS["v"], x + w, ba)
+    bot = SYMBOLS["bl"] + SYMBOLS["h"] * (w - 2) + SYMBOLS["br"]
+    safe_add(stdscr, y + h - 1, x, bot, x + w, ba)
+
+
+# ── MAIN DRAW + LOOP ────────────────────────────────────────
+
+def refresh_data(cache: dict) -> dict:
+    """Refresh cached dashboard data from DB + filesystem."""
+    data = query_db(DB_PATH)
+    active_all = data["active_sessions"]
+    active_sids_all = {s["session_id"] for s in active_all}
+    team_data = query_teams(DB_PATH, active_sids_all)
+    cache.update({
+        "data": data,
+        "active_all": active_all,
+        "r_agents": data["running_agents"],
+        "c_agents": data["completed_agents"],
+        "recent": data["recent_prompts"],
+        "tool_events": data["tool_events"],
+        "activity": data["activity"],
+        "team_data": team_data,
+        "session_lookup": {s["session_id"]: s for s in active_all},
+    })
+    return cache
+
+
+def draw(stdscr, frame: int, state: dict, cache: dict):
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-
-    curses.start_color()
-    curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)
-    curses.init_pair(2, curses.COLOR_WHITE, -1)
-    curses.init_pair(3, curses.COLOR_CYAN, -1)
-    curses.init_pair(4, curses.COLOR_YELLOW, -1)
-    curses.init_pair(5, 8, -1)
-    curses.init_pair(6, curses.COLOR_MAGENTA, -1)
-    curses.init_pair(7, curses.COLOR_RED, -1)
-
-    GREEN = curses.color_pair(1) | curses.A_BOLD
-    CYAN = curses.color_pair(3) | curses.A_BOLD
-    YELLOW = curses.color_pair(4) | curses.A_BOLD
-    DIM = curses.color_pair(5)
-    MAGENTA = curses.color_pair(6) | curses.A_BOLD
-    WHITE = curses.color_pair(2)
-    RED = curses.color_pair(7) | curses.A_BOLD
+    if h < 5 or w < 30:
+        safe_add(stdscr, 0, 0, "terminal too small", w, 0)
+        stdscr.refresh()
+        return
 
     spins = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
     sc = spins[frame % len(spins)]
     pulse = ("○", "◎", "●", "◎")[frame % 4]
 
-    data = query_db(DB_PATH)
-    active_all = data["active_sessions"]
-    r_agents = data["running_agents"]
-    c_agents = data["completed_agents"]
-    recent = data["recent_prompts"]
-    tool_events = data["tool_events"]
+    active_all = cache["active_all"]
+    r_agents = cache["r_agents"]
+    c_agents = cache["c_agents"]
+    recent = cache["recent"]
+    tool_events = cache["tool_events"]
+    activity = cache["activity"]
+    team_data = cache["team_data"]
+    session_lookup = cache["session_lookup"]
 
-    # Resolve teams from file system + DB
-    active_sids_all = {s["session_id"] for s in active_all}
-    team_data = query_teams(DB_PATH, active_sids_all)
     team_session_ids = team_data["team_session_ids"]
     teams = team_data["teams"]
-    session_lookup = {s["session_id"]: s for s in active_all}
 
     # Solo sessions: exclude team members (shown in TEAMS section instead)
     active = [s for s in active_all if s["session_id"] not in team_session_ids]
@@ -438,39 +553,42 @@ def draw(stdscr, frame: int, state: dict):
         else:
             orphan_agents.append(a)
 
-    # Hstack layout: always split left/right when terminal wide enough
+    # Layout
+    split = w >= 100
+    lw = (w * 3) // 5 if split else w
+    rw = w - lw if split else 0
+    rx = lw  # right panel x position
+
     top_agents = data.get("top_agents", [])
     top_tools = data.get("top_tools", [])
-    has_right_content = bool(top_agents or top_tools or teams)
-    split = w >= 80 and has_right_content
-    lw = (w * 3) // 5 if split else w   # left panel width
-    rs = lw + 1                          # right panel start col
-    rw = w - rs                          # right panel width
 
-    # Left-panel safe_add (clips to left panel)
+    # Helpers: clip to panel widths (preserve box borders)
     def L(r, c, text, attr=0):
-        safe_add(stdscr, r, c, text, lw, attr)
+        safe_add(stdscr, r, c, text, lw - 1, attr)
 
-    # Reset visible agent list for keyboard nav
-    visible_agents: list[dict] = []
+    def R(r, c, text, attr=0):
+        safe_add(stdscr, r, c, text, rx + rw - 1, attr)
+
+    # Reset visible items for keyboard nav
+    visible_items: list[dict] = []
 
     n_team_members = sum(len(t["members"]) for t in teams)
     total_live = len(active) + len(r_agents) + n_team_members
-    row = 0
 
-    # -- Title bar (full width) --
+    # -- Title bar (row 0-1, full width) --
+    row = 0
     now = datetime.now(timezone.utc).strftime("%H:%M:%S")
     if total_live > 0:
         title = f" {sc} CLAUDE AGENTS"
         counts = []
         if teams:
             tm_count = n_team_members
-            counts.append(f"{len(teams)} team{'s' if len(teams) != 1 else ''} · {tm_count} active")
+            counts.append(f"{len(teams)} team{'s' if len(teams) != 1 else ''} \u00b7 {tm_count} active")
         if active:
             counts.append(f"{len(active)} session{'s' if len(active) != 1 else ''}")
         if r_agents:
             counts.append(f"{len(r_agents)} agent{'s' if len(r_agents) != 1 else ''}")
-        count_str = f"  {' · '.join(counts)}"
+        count_str = f"  {' \u00b7 '.join(counts)}"
         title_attr = YELLOW
     else:
         title = "   CLAUDE AGENTS"
@@ -481,58 +599,89 @@ def draw(stdscr, frame: int, state: dict):
     safe_add(stdscr, row, len(title), count_str, w, DIM)
     safe_add(stdscr, row, w - len(now) - 1, now, w, DIM)
     row += 1
-    safe_add(stdscr, row, 0, "━" * w, w, DIM)
+    safe_add(stdscr, row, 0, SYMBOLS["h"] * w, w, DIM)
     row += 1
-    content_top = row  # first content row (for right panel to start at)
+    content_top = row
 
-    # -- Teams section (left panel) --
+    # -- Compute panel heights --
+    # Teams panel
+    n_team_subheaders = len(teams) if len(teams) > 1 else 0
+    n_active_task_rows = 0
+    for team in teams:
+        for m in team["members"]:
+            if any(t.get("owner") == m.get("teammate_name") and t.get("status") == "in_progress"
+                   for t in team["tasks"]):
+                n_active_task_rows += 1
+    teams_h = (2 + n_team_members + n_active_task_rows + n_team_subheaders) if teams else 0
+
+    # Sessions panel
+    n_sess_rows = 0
+    for s in active:
+        n_sess_rows += 1
+        children = agents_by_session.get(s["session_id"], [])
+        if children:
+            n_sess_rows += len(children)
+        elif s["session_id"] in tool_events:
+            n_sess_rows += 1
+    n_sess_rows += len(orphan_agents)
+    sess_h = (2 + n_sess_rows) if (active or orphan_agents) else 0
+
+    # History gets remaining space
+    hist_h = max(3, h - content_top - teams_h - sess_h - 1)
+
+    # If nothing active, show a small sessions box with idle message
+    if not teams and not active and not r_agents:
+        sess_h = 3
+        hist_h = max(3, h - content_top - sess_h - 1)
+
+    # -- TEAMS panel --
+    cr = content_top
     if teams:
-        # Build header line
+        # Build title
         if len(teams) == 1:
             t0 = teams[0]
             tl = t0["tasks"]
             tdone = sum(1 for x in tl if x.get("status") == "completed")
             trinp = sum(1 for x in tl if x.get("status") == "in_progress")
-            tpend = sum(1 for x in tl if x.get("status") == "pending")
             ttotal = len(tl)
-            tparts = []
-            if tdone: tparts.append(f"{tdone}✓")
-            if trinp: tparts.append(f"{trinp}●")
-            if tpend: tparts.append(f"{tpend}○")
-            tcounts = f"  {ttotal} tasks  {' '.join(tparts)}" if ttotal else ""
-            header_str = f" TEAMS ({t0['name']}{tcounts})"
+            if ttotal > 0:
+                bar = _progress_bar(tdone, trinp, ttotal, 5)
+                tcounts = f"  {bar} {tdone}/{ttotal}"
+            else:
+                tcounts = ""
+            box_title = f"TEAMS  {t0['name']}{tcounts}"
         else:
-            header_str = f" TEAMS ({len(teams)} teams · {n_team_members} active)"
-        L(row, 0, header_str, CYAN)
-        row += 1
+            box_title = f"TEAMS  {len(teams)} teams \u00b7 {n_team_members} active"
+
+        draw_box(stdscr, cr, 0, teams_h, lw, title=box_title)
+        tr = cr + 1  # first content row inside box
 
         for team in teams:
-            if row >= h - 2:
+            if tr >= cr + teams_h - 1:
                 break
             if len(teams) > 1:
-                # Sub-header per team with task counts
+                # Sub-header per team
                 tl = team["tasks"]
                 tdone = sum(1 for x in tl if x.get("status") == "completed")
                 trinp = sum(1 for x in tl if x.get("status") == "in_progress")
-                tpend = sum(1 for x in tl if x.get("status") == "pending")
                 ttotal = len(tl)
-                tparts = []
-                if tdone: tparts.append(f"{tdone}✓")
-                if trinp: tparts.append(f"{trinp}●")
-                if tpend: tparts.append(f"{tpend}○")
-                tcounts = f"  {ttotal} tasks  {' '.join(tparts)}" if ttotal else ""
-                L(row, 1, f"◈ {team['name']}{tcounts}", CYAN)
-                row += 1
-                base = 3
+                if ttotal > 0:
+                    bar = _progress_bar(tdone, trinp, ttotal, 5)
+                    tcounts = f"  {bar} {tdone}/{ttotal}"
+                else:
+                    tcounts = ""
+                L(tr, 2, f"\u25c8 {team['name']}{tcounts}", CYAN)
+                tr += 1
+                base = 4
             else:
-                base = 1
+                base = 2
 
             members = team["members"]
             for i, m in enumerate(members):
-                if row >= h - 2:
+                if tr >= cr + teams_h - 1:
                     break
                 is_last = (i == len(members) - 1)
-                connector = "└─" if is_last else "├─"
+                connector = "\u2514\u2500" if is_last else "\u251c\u2500"
                 sess = session_lookup.get(m["session_id"], {})
                 started_at = sess.get("created_at", "")
                 dur = fmt_dur(started_at) if started_at else "?"
@@ -549,169 +698,208 @@ def draw(stdscr, frame: int, state: dict):
                     "is_teammate": True,
                     "_tasks": team["tasks"],
                 }
-                vidx = len(visible_agents)
-                visible_agents.append(item)
+                vidx = len(visible_items)
+                visible_items.append(item)
                 is_sel = (vidx == state.get("selected", -1))
+
+                # Sparkline + status for this teammate
+                spark = sparkline(activity.get(m["session_id"], []))
+                s_icon, s_color = member_status(activity.get(m["session_id"], []), sess)
 
                 if is_sel:
                     try:
-                        stdscr.addnstr(row, 0, " " * (lw - 1), lw - 1, curses.A_REVERSE)
+                        stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
                     except curses.error:
                         pass
-                    L(row, base, connector, DIM | curses.A_REVERSE)
-                    L(row, base + 3, "▶", YELLOW | curses.A_REVERSE)
-                    L(row, base + 5, f"{dur:>5}", YELLOW | curses.A_REVERSE)
-                    L(row, base + 11, sid_short, DIM | curses.A_REVERSE)
-                    L(row, base + 18, teammate_name, curses.A_REVERSE | curses.A_BOLD)
+                    L(tr, base, connector, DIM | curses.A_REVERSE)
+                    L(tr, base + 3, "\u25b6", YELLOW | curses.A_REVERSE)
+                    L(tr, base + 5, f"{dur:>5}", YELLOW | curses.A_REVERSE)
+                    L(tr, base + 11, sid_short, DIM | curses.A_REVERSE)
+                    L(tr, base + 18, teammate_name, curses.A_REVERSE | curses.A_BOLD)
+                    L(tr, lw - 12, spark, DIM | curses.A_REVERSE)
                 else:
-                    L(row, base, connector, DIM)
-                    L(row, base + 3, pulse, CYAN)
-                    L(row, base + 5, f"{dur:>5}", YELLOW)
-                    L(row, base + 11, sid_short, DIM)
-                    L(row, base + 18, teammate_name, WHITE)
-                row += 1
-        row += 1
+                    L(tr, base, connector, DIM)
+                    L(tr, base + 3, s_icon, s_color)
+                    L(tr, base + 5, f"{dur:>5}", YELLOW)
+                    L(tr, base + 11, sid_short, DIM)
+                    L(tr, base + 18, teammate_name, WHITE)
+                    L(tr, lw - 12, spark, CYAN)
+                tr += 1
 
-    # -- Sessions (tree view, left panel) --
-    if active:
+                # Active task row under this member
+                active_task = None
+                for t in team["tasks"]:
+                    if t.get("owner") == teammate_name and t.get("status") == "in_progress":
+                        active_task = t
+                        break
+                if active_task and tr < cr + teams_h - 1:
+                    continuation = "\u2502" if not is_last else " "
+                    task_text = active_task.get("activeForm") or active_task.get("subject", "")
+                    task_text = task_text[:lw - base - 10]
+                    if is_sel:
+                        try:
+                            stdscr.addnstr(tr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
+                        except curses.error:
+                            pass
+                        L(tr, base, continuation, DIM | curses.A_REVERSE)
+                        L(tr, base + 5, "\u25cf", YELLOW | curses.A_REVERSE)
+                        L(tr, base + 7, task_text, YELLOW | curses.A_REVERSE)
+                    else:
+                        L(tr, base, continuation, DIM)
+                        L(tr, base + 5, "\u25cf", YELLOW)
+                        L(tr, base + 7, task_text, YELLOW)
+                    tr += 1
+
+        cr += teams_h
+
+    # -- SESSIONS panel --
+    if active or orphan_agents:
         n_running = sum(
             1 for s in active
             if not s.get("lastWaitUserAt") or s["session_id"] in agents_by_session
         )
         n_waiting = len(active) - n_running
-        counts = []
+        sess_counts = []
         if n_running:
-            counts.append(f"{n_running} running")
+            sess_counts.append(f"{n_running} running")
         if n_waiting:
-            counts.append(f"{n_waiting} waiting")
+            sess_counts.append(f"{n_waiting} waiting")
         if r_agents:
-            counts.append(f"{len(r_agents)} agent{'s' if len(r_agents) != 1 else ''}")
-        L(row, 0, f" SESSIONS ({' · '.join(counts)})", CYAN)
-        row += 1
+            sess_counts.append(f"{len(r_agents)} agent{'s' if len(r_agents) != 1 else ''}")
+        sess_title = f"SESSIONS  {' \u00b7 '.join(sess_counts)}" if sess_counts else "SESSIONS"
+
+        draw_box(stdscr, cr, 0, sess_h, lw, title=sess_title)
+        sr = cr + 1
 
         for s in active:
-            if row >= h - 2:
+            if sr >= cr + sess_h - 1:
                 break
             sid = s["session_id"]
             child_agents = agents_by_session.get(sid, [])
             has_agents = len(child_agents) > 0
             waiting = bool(s.get("lastWaitUserAt")) and not has_agents
             sid_short = short_session(sid)
-            prompt = short_prompt(s.get("prompt"), max(10, lw - 22))
+            prompt = short_prompt(s.get("prompt"), max(10, lw - 32))
+            spark = sparkline(activity.get(sid, []))
 
             if waiting:
                 wait_dur = fmt_dur(s["lastWaitUserAt"])
-                L(row, 1, "○", YELLOW)
-                L(row, 3, f"~{wait_dur:>5}", DIM)
-                L(row, 10, sid_short, DIM)
-                L(row, 17, prompt, DIM)
+                L(sr, 2, "\u25cb", YELLOW)
+                L(sr, 4, f"~{wait_dur:>5}", DIM)
+                L(sr, 11, sid_short, DIM)
+                L(sr, 18, prompt, DIM)
             else:
                 run_dur = fmt_dur(s["created_at"])
-                L(row, 1, pulse, GREEN)
-                L(row, 3, f"{run_dur:>6}", YELLOW)
-                L(row, 10, sid_short, DIM)
-                L(row, 17, prompt, WHITE)
-            row += 1
+                L(sr, 2, pulse, GREEN)
+                L(sr, 4, f"{run_dur:>6}", YELLOW)
+                L(sr, 11, sid_short, DIM)
+                L(sr, 18, prompt, WHITE)
+                L(sr, lw - 12, spark, CYAN)
+            sr += 1
 
             # Child agents (tree connectors)
             if has_agents:
                 for i, a in enumerate(child_agents):
-                    if row >= h - 2:
+                    if sr >= cr + sess_h - 1:
                         break
                     is_last = (i == len(child_agents) - 1)
-                    connector = "└" if is_last else "├"
+                    connector = "\u2514" if is_last else "\u251c"
                     adur = fmt_dur(a["started_at"])
                     atype = a["agent_type"] or "agent"
                     aid = short_id(a["agent_id"])
                     tag = dir_tag(a.get("cwd", ""))
-                    vidx = len(visible_agents)
-                    visible_agents.append(a)
+                    vidx = len(visible_items)
+                    visible_items.append(a)
                     is_sel = (vidx == state.get("selected", -1))
+                    a_spark = sparkline(activity.get(a.get("session_id", ""), []))
 
                     if is_sel:
                         try:
-                            stdscr.addnstr(row, 0, " " * (lw - 1), lw - 1, curses.A_REVERSE)
+                            stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
                         except curses.error:
                             pass
-                        L(row, 3, connector, DIM | curses.A_REVERSE)
-                        L(row, 5, "▶", YELLOW | curses.A_REVERSE)
-                        L(row, 7, f"{adur:>5}", YELLOW | curses.A_REVERSE)
-                        col = 13
+                        L(sr, 4, connector, DIM | curses.A_REVERSE)
+                        L(sr, 6, "\u25b6", YELLOW | curses.A_REVERSE)
+                        L(sr, 8, f"{adur:>5}", YELLOW | curses.A_REVERSE)
+                        col = 14
                         if tag:
-                            L(row, col, tag, CYAN | curses.A_REVERSE)
+                            L(sr, col, tag, CYAN | curses.A_REVERSE)
                             col += len(tag) + 1
-                        L(row, col, atype, curses.A_REVERSE | curses.A_BOLD)
-                        L(row, col + len(atype) + 1, aid, curses.A_REVERSE)
+                        L(sr, col, atype, curses.A_REVERSE | curses.A_BOLD)
+                        L(sr, col + len(atype) + 1, aid, curses.A_REVERSE)
+                        L(sr, lw - 12, a_spark, DIM | curses.A_REVERSE)
                     else:
-                        L(row, 3, connector, DIM)
-                        L(row, 5, sc, MAGENTA)
-                        L(row, 7, f"{adur:>5}", YELLOW)
-                        col = 13
+                        L(sr, 4, connector, DIM)
+                        L(sr, 6, sc, MAGENTA)
+                        L(sr, 8, f"{adur:>5}", YELLOW)
+                        col = 14
                         if tag:
-                            L(row, col, tag, CYAN)
+                            L(sr, col, tag, CYAN)
                             col += len(tag) + 1
-                        L(row, col, atype, MAGENTA)
-                        L(row, col + len(atype) + 1, aid, DIM)
-                    row += 1
+                        L(sr, col, atype, MAGENTA)
+                        L(sr, col + len(atype) + 1, aid, DIM)
+                        L(sr, lw - 12, a_spark, CYAN)
+                    sr += 1
             elif sid in tool_events:
                 tools = tool_events[sid]
                 parts = []
                 for t in tools:
                     name = t["tool_name"]
                     label = t["tool_label"]
-                    parts.append(f"{name}→{label}" if label and label != name else name)
-                L(row, 3, "└", DIM)
-                L(row, 5, "  ".join(parts)[:lw - 6], DIM)
-                row += 1
-        row += 1
+                    parts.append(f"{name}\u2192{label}" if label and label != name else name)
+                L(sr, 4, "\u2514", DIM)
+                L(sr, 6, "  ".join(parts)[:lw - 8], DIM)
+                sr += 1
 
-    # Orphan agents — selectable too
-    if orphan_agents:
+        # Orphan agents
         for a in orphan_agents:
-            if row >= h - 2:
+            if sr >= cr + sess_h - 1:
                 break
             dur = fmt_dur(a["started_at"])
             atype = a["agent_type"] or "agent"
             tag = dir_tag(a.get("cwd", ""))
-            vidx = len(visible_agents)
-            visible_agents.append(a)
+            vidx = len(visible_items)
+            visible_items.append(a)
             is_sel = (vidx == state.get("selected", -1))
+            a_spark = sparkline(activity.get(a.get("session_id", ""), []))
 
             if is_sel:
                 try:
-                    stdscr.addnstr(row, 0, " " * (lw - 1), lw - 1, curses.A_REVERSE)
+                    stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, curses.A_REVERSE)
                 except curses.error:
                     pass
-                L(row, 1, "▶", YELLOW | curses.A_REVERSE)
-                L(row, 3, f"{dur:>6}", YELLOW | curses.A_REVERSE)
-                col = 10
+                L(sr, 2, "\u25b6", YELLOW | curses.A_REVERSE)
+                L(sr, 4, f"{dur:>6}", YELLOW | curses.A_REVERSE)
+                col = 11
                 if tag:
-                    L(row, col, tag, CYAN | curses.A_REVERSE)
+                    L(sr, col, tag, CYAN | curses.A_REVERSE)
                     col += len(tag) + 1
-                L(row, col, atype, curses.A_REVERSE | curses.A_BOLD)
-                L(row, col + len(atype) + 1, short_id(a["agent_id"]), curses.A_REVERSE)
+                L(sr, col, atype, curses.A_REVERSE | curses.A_BOLD)
+                L(sr, col + len(atype) + 1, short_id(a["agent_id"]), curses.A_REVERSE)
+                L(sr, lw - 12, a_spark, DIM | curses.A_REVERSE)
             else:
-                L(row, 1, sc, MAGENTA)
-                L(row, 3, f"{dur:>6}", YELLOW)
-                col = 10
+                L(sr, 2, sc, MAGENTA)
+                L(sr, 4, f"{dur:>6}", YELLOW)
+                col = 11
                 if tag:
-                    L(row, col, tag, CYAN)
+                    L(sr, col, tag, CYAN)
                     col += len(tag) + 1
-                L(row, col, atype, MAGENTA)
-                L(row, col + len(atype) + 1, short_id(a["agent_id"]), DIM)
-            row += 1
-        row += 1
+                L(sr, col, atype, MAGENTA)
+                L(sr, col + len(atype) + 1, short_id(a["agent_id"]), DIM)
+                L(sr, lw - 12, a_spark, CYAN)
+            sr += 1
 
-    # Show idle state when nothing is active
-    if not active and not r_agents and not teams:
-        L(row, 0, " no active sessions or agents", DIM)
-        row += 2
+        cr += sess_h
 
-    # -- History (left panel) --
-    L(row, 0, "━" * lw, DIM)
-    row += 1
-    L(row, 0, " HISTORY", CYAN)
-    row += 1
+    elif not teams:
+        # No active sessions or agents — show idle box
+        draw_box(stdscr, cr, 0, sess_h, lw, title="SESSIONS")
+        L(cr + 1, 2, "no active sessions or agents", DIM)
+        cr += sess_h
+
+    # -- HISTORY panel --
+    draw_box(stdscr, cr, 0, hist_h, lw, title="HISTORY")
+    hr = cr + 1
 
     history = []
     for a in c_agents:
@@ -721,46 +909,45 @@ def draw(stdscr, frame: int, state: dict):
     history.sort(key=lambda x: x[1] or "", reverse=True)
 
     if not history:
-        L(row, 0, "   (empty)", DIM)
+        L(hr, 2, "(empty)", DIM)
     else:
         shown = 0
         for kind, ts, item in history:
-            if row >= h - 1 or shown >= MAX_HISTORY:
+            if hr >= cr + hist_h - 1 or shown >= MAX_HISTORY:
                 break
             t = fmt_time(ts)
             if kind == "agent":
                 dur = fmt_dur(item["started_at"], item["stopped_at"])
                 atype = item.get("agent_type") or "agent"
-                L(row, 1, t, DIM)
-                L(row, 10, f"{dur:>6}", DIM)
-                L(row, 17, f"▸ {atype}", curses.color_pair(6))
+                L(hr, 2, t, DIM)
+                L(hr, 11, f"{dur:>6}", DIM)
+                L(hr, 18, f"\u25b8 {atype}", curses.color_pair(6))
             else:
                 dur = fmt_dur(item["created_at"], item["stoped_at"])
-                prompt = short_prompt(item.get("prompt"), max(10, lw - 19))
+                prompt = short_prompt(item.get("prompt"), max(10, lw - 21))
                 if not prompt:
                     continue
-                L(row, 1, t, DIM)
-                L(row, 10, f"{dur:>6}", DIM)
-                L(row, 17, prompt, DIM)
-            row += 1
+                L(hr, 2, t, DIM)
+                L(hr, 11, f"{dur:>6}", DIM)
+                L(hr, 18, prompt, DIM)
+            hr += 1
             shown += 1
 
-    # Clamp selection to visible agents
-    state["visible_agents"] = visible_agents
-    if visible_agents:
-        state["selected"] = max(-1, min(state.get("selected", -1), len(visible_agents) - 1))
+    # Clamp selection to visible items
+    state["visible_items"] = visible_items
+    if visible_items:
+        state["selected"] = max(-1, min(state.get("selected", -1), len(visible_items) - 1))
     else:
         state["selected"] = -1
 
-    # -- Right panel: divider + preview (if agent selected) or stats --
+    # -- DETAIL panel (right side) --
     sel_idx = state.get("selected", -1)
-    sel_agent = visible_agents[sel_idx] if 0 <= sel_idx < len(visible_agents) else None
-    if split and rw > 10:
-        # Vertical divider
-        for r in range(content_top, h - 1):
-            safe_add(stdscr, r, lw, "│", w, DIM)
+    sel_agent = visible_items[sel_idx] if 0 <= sel_idx < len(visible_items) else None
 
-        pr = content_top
+    if split and rw > 10:
+        detail_h = h - content_top - 1
+        draw_box(stdscr, content_top, rx, detail_h, rw, title="DETAIL")
+        pr = content_top + 1
 
         if sel_agent and sel_agent.get("is_teammate"):
             # Task list for selected team member
@@ -768,10 +955,10 @@ def draw(stdscr, frame: int, state: dict):
             teammate_name = sel_agent.get("teammate_name", "")
             dur = fmt_dur(sel_agent.get("started_at", ""))
             sid_short = sel_agent["agent_id"][:7]
-            header = f" {sid_short} · {team_name}/{teammate_name} · {dur}"
-            safe_add(stdscr, pr, rs, header[:rw], w, CYAN | curses.A_BOLD)
+            header = f"{sid_short} \u00b7 {team_name}/{teammate_name} \u00b7 {dur}"
+            R(pr, rx + 2, header[:rw - 4], CYAN | curses.A_BOLD)
             pr += 1
-            safe_add(stdscr, pr, rs, "─" * (rw - 1), w, DIM)
+            R(pr, rx + 2, SYMBOLS["h"] * (rw - 4), DIM)
             pr += 1
             tasks_list = sel_agent.get("_tasks", [])
             sorted_tasks = sorted(
@@ -779,46 +966,118 @@ def draw(stdscr, frame: int, state: dict):
                 key=lambda t: {"in_progress": 0, "pending": 1, "completed": 2}.get(t.get("status", ""), 1),
             )
             if not sorted_tasks:
-                safe_add(stdscr, pr, rs, " (no tasks)", w, DIM)
+                R(pr, rx + 2, "(no tasks)", DIM)
             else:
+                # Progress header
+                t_done = sum(1 for t in sorted_tasks if t.get("status") == "completed")
+                t_active = sum(1 for t in sorted_tasks if t.get("status") == "in_progress")
+                t_blocked = sum(1 for t in sorted_tasks if t.get("status") == "pending" and t.get("blockedBy"))
+                t_total = len(sorted_tasks)
+                pbar = _progress_bar(t_done, t_active, t_total, 10)
+                pct = int(t_done / t_total * 100) if t_total else 0
+                parts = [f"{t_done} done"]
+                if t_active:
+                    parts.append(f"{t_active} active")
+                if t_blocked:
+                    parts.append(f"{t_blocked} blocked")
+                t_pending_unblocked = t_total - t_done - t_active - t_blocked
+                if t_pending_unblocked > 0:
+                    parts.append(f"{t_pending_unblocked} pending")
+                R(pr, rx + 2, f"{pbar} {pct}%  {' \u00b7 '.join(parts)}", CYAN)
+                pr += 1
+                pr += 1  # blank line
+
                 for t in sorted_tasks:
-                    if pr >= h - 1:
+                    if pr >= content_top + detail_h - 1:
                         break
                     status = t.get("status", "")
-                    icon = "✓" if status == "completed" else "●" if status == "in_progress" else "○"
-                    subject = short_prompt(t.get("subject", "?"), rw - 5)
-                    attr = DIM if status == "completed" else WHITE
-                    safe_add(stdscr, pr, rs, f" {icon}  {subject}", w, attr)
+                    blocked = bool(t.get("blockedBy")) and status == "pending"
+                    if status == "completed":
+                        icon = "\u2713"
+                    elif status == "in_progress":
+                        icon = "\u25cf"
+                    elif blocked:
+                        icon = "\u2298"
+                    else:
+                        icon = "\u25cb"
+                    owner = t.get("owner", "")
+                    owner_tag = f"  [@{owner}]" if owner else ""
+                    subject = short_prompt(t.get("subject", "?"), rw - 10 - len(owner_tag))
+                    if status == "completed":
+                        attr = DIM
+                    elif status == "in_progress":
+                        attr = YELLOW
+                    elif blocked:
+                        attr = RED
+                    else:
+                        attr = WHITE
+                    R(pr, rx + 2, f"{icon}  {subject}{owner_tag}", attr)
                     pr += 1
+
         elif sel_agent:
             # Live preview of selected subagent
             dur = fmt_dur(sel_agent["started_at"])
             atype = sel_agent.get("agent_type") or "agent"
             aid = sel_agent["agent_id"][:7]
             tag = dir_tag(sel_agent.get("cwd", ""))
-            header = f" {aid} · {tag} {atype} · {dur}" if tag else f" {aid} · {atype} · {dur}"
-            safe_add(stdscr, pr, rs, header[:rw], w, MAGENTA | curses.A_BOLD)
+            header = f"{aid} \u00b7 {tag} {atype} \u00b7 {dur}" if tag else f"{aid} \u00b7 {atype} \u00b7 {dur}"
+            R(pr, rx + 2, header[:rw - 4], MAGENTA | curses.A_BOLD)
             pr += 1
-            safe_add(stdscr, pr, rs, "─" * (rw - 1), w, DIM)
+            R(pr, rx + 2, SYMBOLS["h"] * (rw - 4), DIM)
             pr += 1
-            for line in read_preview_lines(sel_agent, h - pr - 1):
-                if pr >= h - 1:
+            for line in read_preview_lines(sel_agent, content_top + detail_h - pr - 1):
+                if pr >= content_top + detail_h - 1:
                     break
-                safe_add(stdscr, pr, rs, line[:rw - 1], w, WHITE)
+                R(pr, rx + 2, line[:rw - 4], WHITE)
                 pr += 1
+
         else:
-            # Stats: agent type ranking + tool ranking
+            # Stats: team metrics + agent type ranking + tool ranking
             def _bar(val: int, max_val: int, bw: int = 8) -> str:
                 filled = int(val / max_val * bw) if max_val > 0 else 0
-                return "█" * filled + "░" * (bw - filled)
+                return "\u2588" * filled + "\u2591" * (bw - filled)
 
-            safe_add(stdscr, pr, rs, " AGENTS  7d", w, CYAN)
+            # Team metrics (when teams exist)
+            if teams and pr < content_top + detail_h - 4:
+                for team in teams:
+                    if pr >= content_top + detail_h - 2:
+                        break
+                    tl = team["tasks"]
+                    t_done = sum(1 for t in tl if t.get("status") == "completed")
+                    t_active = sum(1 for t in tl if t.get("status") == "in_progress")
+                    t_pending = sum(1 for t in tl if t.get("status") == "pending")
+                    t_total = len(tl)
+                    R(pr, rx + 2, f"TEAMS  {team['name']}", CYAN)
+                    pr += 1
+                    if t_total > 0:
+                        bar = _progress_bar(t_done, t_active, t_total, 10)
+                        summary = f"{bar} {t_total} task{'s' if t_total != 1 else ''}  {t_done} done  {t_active} active  {t_pending} pending"
+                        R(pr, rx + 2, summary, DIM)
+                        pr += 1
+                    pr += 1  # blank line
+                    # Per-member task bars
+                    name_w = max((len(m.get("teammate_name", "")) for m in team["members"]), default=0)
+                    for m in team["members"]:
+                        if pr >= content_top + detail_h - 1:
+                            break
+                        mname = m.get("teammate_name", "?")
+                        m_tasks = [t for t in tl if t.get("owner") == mname]
+                        m_done = sum(1 for t in m_tasks if t.get("status") == "completed")
+                        m_active = sum(1 for t in m_tasks if t.get("status") == "in_progress")
+                        m_total = len(m_tasks)
+                        mbar = _progress_bar(m_done, m_active, m_total, 8) if m_total > 0 else "\u2591" * 8
+                        task_label = "task" if m_total == 1 else "tasks"
+                        R(pr, rx + 2, f"{mname.ljust(name_w)}  {m_total} {task_label}  {mbar}", DIM)
+                        pr += 1
+                    pr += 1  # gap before next section
+
+            R(pr, rx + 2, "AGENTS  7d", CYAN)
             pr += 1
             max_a = top_agents[0]["cnt"] if top_agents else 1
             tag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_agents), default=0)
             type_w = max((len(e["agent_type"] or "?") for e in top_agents), default=0)
             for entry in top_agents:
-                if pr >= h - 1:
+                if pr >= content_top + detail_h - 1:
                     break
                 tag = dir_tag(entry.get("cwd", ""))
                 atype = entry["agent_type"] or "?"
@@ -826,18 +1085,18 @@ def draw(stdscr, frame: int, state: dict):
                 bar = _bar(cnt, max_a)
                 col1 = tag.ljust(tag_w)
                 col2 = atype.ljust(type_w)
-                safe_add(stdscr, pr, rs, f" {col1}  {col2}  {bar} {cnt}", w, DIM)
+                R(pr, rx + 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
                 pr += 1
 
             pr += 1
-            if top_tools and pr < h - 2:
-                safe_add(stdscr, pr, rs, " TOOLS   7d", w, CYAN)
+            if top_tools and pr < content_top + detail_h - 2:
+                R(pr, rx + 2, "TOOLS   7d", CYAN)
                 pr += 1
                 max_t = top_tools[0]["cnt"] if top_tools else 1
                 ttag_w = max((len(dir_tag(e.get("cwd", ""))) for e in top_tools), default=0)
                 tname_w = max((len(e["tool_name"] or "?") for e in top_tools), default=0)
                 for entry in top_tools:
-                    if pr >= h - 1:
+                    if pr >= content_top + detail_h - 1:
                         break
                     tag = dir_tag(entry.get("cwd", ""))
                     tname = entry["tool_name"] or "?"
@@ -845,27 +1104,37 @@ def draw(stdscr, frame: int, state: dict):
                     bar = _bar(cnt, max_t)
                     col1 = tag.ljust(ttag_w)
                     col2 = tname.ljust(tname_w)
-                    safe_add(stdscr, pr, rs, f" {col1}  {col2}  {bar} {cnt}", w, DIM)
+                    R(pr, rx + 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
                     pr += 1
 
     # -- Footer (full width) --
-    if visible_agents:
-        safe_add(stdscr, h - 1, 0, " j/k=select  esc=deselect  q=quit", w, DIM)
+    if visible_items:
+        safe_add(stdscr, h - 1, 0, " j/k=select  esc=deselect  enter=open  q=quit", w, DIM)
     else:
-        safe_add(stdscr, h - 1, 0, " q=quit │ 1s refresh", w, DIM)
+        safe_add(stdscr, h - 1, 0, " q=quit", w, DIM)
     stdscr.refresh()
+
+
+RENDER_MS = 200     # redraw interval (smooth animations)
+DATA_FRAMES = 10    # refresh DB every N frames (~2s at 200ms)
 
 
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(True)
-    stdscr.timeout(1000)
+    stdscr.timeout(RENDER_MS)
     stdscr.keypad(True)
 
-    state: dict = {"selected": -1, "visible_agents": [], "status_msg": "", "status_until": 0.0}
+    init_colors()
+
+    state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_until": 0.0}
+    cache: dict = {}
+    refresh_data(cache)
     frame = 0
     while True:
-        draw(stdscr, frame, state)
+        if frame % DATA_FRAMES == 0:
+            refresh_data(cache)
+        draw(stdscr, frame, state, cache)
         frame += 1
         ch = stdscr.getch()
         if ch in (ord("q"), ord("Q")):
@@ -873,7 +1142,7 @@ def main(stdscr):
         elif ch == 27:  # Esc — deselect (back to stats view)
             state["selected"] = -1
         elif ch in (ord("j"), curses.KEY_DOWN):
-            agents = state["visible_agents"]
+            agents = state["visible_items"]
             if agents:
                 state["selected"] = min(state["selected"] + 1, len(agents) - 1) if state["selected"] >= 0 else 0
         elif ch in (ord("k"), curses.KEY_UP):
@@ -881,7 +1150,7 @@ def main(stdscr):
                 state["selected"] -= 1
         elif ch in (10, 13, curses.KEY_ENTER):
             idx = state["selected"]
-            agents = state["visible_agents"]
+            agents = state["visible_items"]
             if 0 <= idx < len(agents):
                 err = open_agent_in_iterm2(agents[idx])
                 atype = (agents[idx].get("agent_type") or "agent")[:12]

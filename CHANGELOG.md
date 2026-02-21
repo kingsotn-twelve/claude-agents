@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.5.0 — Feb 20, 2026
+
+### Task Progress Tracking
+
+The TEAMS panel title now shows a visual progress bar instead of raw icon counts — `██▓░░ 2/5` tells you at a glance how far along the team is. Select a teammate and the DETAIL panel opens with a richer task view: a 10-char progress header with percentage and status breakdown, blocked tasks marked with `⊘` in red, `[@owner]` tags on every task, and in-progress tasks highlighted in yellow.
+
+### Team Member Status
+
+Team members now show context-aware status icons instead of a uniform pulsing animation. `◉` green means the member is actively using tools (last 15s), `◎` yellow means thinking (session active, no recent tools), and `○` dim means idle or waiting for user input. Each member also shows their current in-progress task on a second line underneath, using `activeForm` when available.
+
+```
+├─ ◉  3m  abc123  researcher   ⣿⣷⣦⣄⣀⠀⠀⠀⠀⠀
+│     ● Implementing auth endpoints
+├─ ◎  3m  def456  implementer  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+└─ ○  3m  789abc  reviewer     ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+      ● Reviewing PR #42
+```
+
+### Team Metrics in Stats View
+
+When no teammate is selected, the DETAIL panel now shows a TEAMS section above the existing agent/tool stats. Each team gets a completion bar with status breakdown, plus per-member task counts with mini progress bars — so you can see who's carrying the load without selecting anyone.
+
+### Smoother Rendering
+
+The render loop now runs at 200ms (5 FPS) instead of 1s, making spinner animations and keyboard navigation feel as fluid as btop. DB queries are cached and only refreshed every ~2s to keep things lightweight.
+
+---
+
 ## v0.4.1 — Feb 20, 2026
 
 ### Esc to deselect
