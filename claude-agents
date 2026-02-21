@@ -1510,12 +1510,14 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
             stats_title = f"STATS  {range_tabs}"
             panel_ranges.append((cr_stats, stats_lh, stats_first_idx, len(visible_items) - 1, stats_title))
 
-    # Clamp selection to visible items
+    # Clamp selection to visible items and recompute sel_agent
     state["visible_items"] = visible_items
     if visible_items:
         state["selected"] = max(-1, min(state.get("selected", -1), len(visible_items) - 1))
     else:
         state["selected"] = -1
+    sel_idx = state.get("selected", -1)
+    sel_agent = visible_items[sel_idx] if 0 <= sel_idx < len(visible_items) else None
 
     # Highlight the left panel that contains the selected item
     if state.get("focus") == "left" and sel_idx >= 0:
