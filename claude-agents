@@ -860,78 +860,62 @@ def _draw_viz_graph(stdscr, y, x, h, w, cache, state, frame):
         nodes[i]["y"] = max(0.05, min(0.95, nodes[i]["y"] + fy[i] * 0.1))
     graph_state["positions"] = [(nd["x"], nd["y"]) for nd in nodes]
 
-    # Render to braille grid
-    char_w = w - 4
-    char_h = h - 1
-    grid_rows = char_h * 4
-    grid_cols = char_w * 2
-    grid = [[0] * grid_cols for _ in range(grid_rows)]  # 0=empty, 1=edge, 2=session, 3=agent, 4=tool
+    # Render as text-based graph with box-drawing edges
+    rw_abs = x + w - 1
+    area_w = w - 6  # usable width inside box
+    area_h = h - 2  # usable height (leave room for legend)
 
-    # Draw edges as lines
+    # Map node positions to screen coordinates
+    type_icons = {"session": "\u25c9", "agent": "\u25c8", "tool": "\u25cb"}
+    type_colors = {"session": GREEN, "agent": MAGENTA, "tool": YELLOW}
+
+    screen_pos = []
+    for nd in nodes:
+        sx = x + 3 + int(nd["x"] * (area_w - 1))
+        sy = y + int(nd["y"] * (area_h - 1))
+        screen_pos.append((sx, sy))
+
+    # Draw edges first (behind nodes)
     for ei, ej in edges:
         if ei >= n or ej >= n:
             continue
-        x1 = int(nodes[ei]["x"] * (grid_cols - 1))
-        y1 = int(nodes[ei]["y"] * (grid_rows - 1))
-        x2 = int(nodes[ej]["x"] * (grid_cols - 1))
-        y2 = int(nodes[ej]["y"] * (grid_rows - 1))
-        steps = max(abs(x2 - x1), abs(y2 - y1), 1)
-        for s in range(steps + 1):
-            px = x1 + (x2 - x1) * s // steps
-            py = y1 + (y2 - y1) * s // steps
-            if 0 <= py < grid_rows and 0 <= px < grid_cols:
-                grid[py][px] = max(grid[py][px], 1)
+        sx1, sy1 = screen_pos[ei]
+        sx2, sy2 = screen_pos[ej]
+        # Draw line using box chars
+        steps = max(abs(sx2 - sx1), abs(sy2 - sy1), 1)
+        for s in range(1, steps):  # skip endpoints
+            px = sx1 + (sx2 - sx1) * s // steps
+            py = sy1 + (sy2 - sy1) * s // steps
+            if y <= py < y + h:
+                dx = sx2 - sx1
+                dy = sy2 - sy1
+                if abs(dx) > abs(dy) * 2:
+                    ch = "\u2500"  # ─
+                elif abs(dy) > abs(dx) * 2:
+                    ch = "\u2502"  # │
+                elif (dx > 0) == (dy > 0):
+                    ch = "\u2572"  # ╲
+                else:
+                    ch = "\u2571"  # ╱
+                safe_add(stdscr, py, px, ch, rw_abs, DIM)
 
-    # Draw nodes (overwrite edges)
-    type_val = {"session": 2, "agent": 3, "tool": 4}
-    for nd in nodes:
-        gx = int(nd["x"] * (grid_cols - 1))
-        gy = int(nd["y"] * (grid_rows - 1))
-        val = type_val.get(nd["type"], 1)
-        for dy in range(-1, 2):
-            for dx in range(-1, 2):
-                ny, nx = gy + dy, gx + dx
-                if 0 <= ny < grid_rows and 0 <= nx < grid_cols:
-                    grid[ny][nx] = val
-
-    # Render braille with colors
-    val_colors = {0: DIM, 1: DIM, 2: GREEN, 3: MAGENTA, 4: YELLOW}
-    pr = y
-    for cy in range(char_h):
-        if pr >= y + h:
-            break
-        cx_pos = x + 2
-        for cxi in range(char_w):
-            code = 0x2800
-            max_val = 0
-            for dy in range(4):
-                for dx in range(2):
-                    gr, gc = cy * 4 + dy, cxi * 2 + dx
-                    if gr < grid_rows and gc < grid_cols and grid[gr][gc] > 0:
-                        max_val = max(max_val, grid[gr][gc])
-                        if dx == 0:
-                            code |= 1 << [0, 1, 2, 6][dy]
-                        else:
-                            code |= 1 << [3, 4, 5, 7][dy]
-            color = val_colors.get(max_val, DIM)
-            safe_add(stdscr, pr, cx_pos, chr(code), x + w - 1, color)
-            cx_pos += 1
-        pr += 1
-
-    # Node labels (rendered as text near each node)
-    type_text_colors = {"session": GREEN, "agent": MAGENTA, "tool": YELLOW}
-    for nd in nodes:
-        lx = x + 2 + int(nd["x"] * (char_w - 1)) + 1
-        ly = y + int(nd["y"] * (h - 2))
-        if y <= ly < y + h:
-            color = type_text_colors.get(nd["type"], DIM)
-            safe_add(stdscr, ly, lx, nd["label"][:12], x + w - 1, color)
+    # Draw nodes + labels
+    for i, nd in enumerate(nodes):
+        sx, sy = screen_pos[i]
+        if y <= sy < y + h:
+            icon = type_icons.get(nd["type"], "\u25cb")
+            color = type_colors.get(nd["type"], DIM)
+            safe_add(stdscr, sy, sx, icon, rw_abs, color)
+            # Label to the right of node
+            label = nd["label"][:area_w // 3]
+            safe_add(stdscr, sy, sx + 2, label, rw_abs, color)
 
     # Legend at bottom
-    if pr < y + h:
-        safe_add(stdscr, pr, x + 2, "\u25cf session", x + w - 1, GREEN)
-        safe_add(stdscr, pr, x + 14, "\u25cf agent", x + w - 1, MAGENTA)
-        safe_add(stdscr, pr, x + 24, "\u25cf tool", x + w - 1, YELLOW)
+    leg_y = y + h - 1
+    if leg_y > y:
+        safe_add(stdscr, leg_y, x + 2, "\u25c9 session", rw_abs, GREEN)
+        safe_add(stdscr, leg_y, x + 14, "\u25c8 agent", rw_abs, MAGENTA)
+        safe_add(stdscr, leg_y, x + 24, "\u25cb tool", rw_abs, YELLOW)
 
 
 def _progress_bar(done, in_progress, total, width=5):
