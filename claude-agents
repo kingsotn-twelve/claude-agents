@@ -1909,43 +1909,59 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 draw_box(stdscr, py, 0, ph, lw, title=ptitle, border_attr=CYAN)
                 break
 
-    # -- Right panel (DETAIL + LIFE) --
+    # -- Right panel (single panel: TREE or TIMELINE, toggled by Tab) --
     if split and rw > 10:
         total_rh = h - content_top - 1
         focused = state.get("focus") == "right"
-        if sel_agent:
-            content_rows = _detail_content_height(sel_agent, rw - 4, cache)
-            detail_h = min(content_rows + 2, total_rh - 4)
-            title_str = "\u25b6 DETAIL" if focused else "DETAIL"
-            draw_box(stdscr, content_top, rx, detail_h, rw, title=title_str,
-                     border_attr=CYAN if focused else 0)
-            max_scroll = max(0, content_rows - (detail_h - 2))
-            state["detail_scroll"] = min(state.get("detail_scroll", 0), max_scroll)
-            scroll = state["detail_scroll"] if focused else 0
-            _draw_detail(stdscr, content_top + 1, rx + 2, content_top + detail_h - 1, rx + rw - 1,
-                         sel_agent, cache, scroll=scroll)
-        else:
-            detail_h = 0
+        viz_mode = VIZ_MODES[state.get("viz_mode", 0) % len(VIZ_MODES)] if state.get("viz_mode", 0) < len(VIZ_MODES) else "life"
 
-        # -- VIZ panel (below detail, or full right panel) --
-        viz_y = content_top + detail_h
-        viz_rh = total_rh - detail_h
-        if viz_rh >= 4:
-            viz_mode = VIZ_MODES[state.get("viz_mode", 0) % len(VIZ_MODES)]
-            viz_label = VIZ_LABELS[viz_mode]
-            # Show tab selector in title
-            tabs = "  ".join(f"[{VIZ_LABELS[m]}]" if m == viz_mode else VIZ_LABELS[m] for m in VIZ_MODES)
-            if state.get("game_of_life"):
-                tabs += "  LIFE"
-            draw_box(stdscr, viz_y, rx, viz_rh, rw, title=f"TAB  {tabs}")
+        # Build title with tab selector
+        tabs = "  ".join(f"[{VIZ_LABELS[m]}]" if m == viz_mode else VIZ_LABELS[m] for m in VIZ_MODES)
+        if state.get("game_of_life"):
+            tabs += "  LIFE"
+        title_prefix = "\u25b6 " if focused else ""
+        draw_box(stdscr, content_top, rx, total_rh, rw,
+                 title=f"{title_prefix}{tabs}",
+                 border_attr=CYAN if focused else 0)
 
-            if viz_mode == "tree":
-                _draw_viz_tree(stdscr, viz_y + 1, rx, viz_rh - 2, rw, cache, state)
-            elif viz_mode == "gantt":
-                _draw_viz_gantt(stdscr, viz_y + 1, rx, viz_rh - 2, rw, cache, state)
+        panel_y = content_top + 1
+        panel_h = total_rh - 2
 
-        # -- Game of Life (if enabled, after viz modes via extra Tab) --
-        if state.get("game_of_life") and state.get("viz_mode", 0) >= len(VIZ_MODES) and viz_rh >= 4:
+        if viz_mode == "tree":
+            # Merged: show DETAIL header + tree for selected item
+            if sel_agent:
+                pr = panel_y
+                rw_abs = rx + rw - 1
+                # Header
+                sid_short = sel_agent["agent_id"][:7]
+                dur = fmt_dur(sel_agent.get("started_at", ""))
+                tag = dir_tag(sel_agent.get("cwd", ""))
+                if sel_agent.get("is_session"):
+                    header = f"{sid_short} \u00b7 {tag} \u00b7 {dur}" if tag else f"{sid_short} \u00b7 {dur}"
+                    safe_add(stdscr, pr, rx + 2, header[:rw - 4], rw_abs, GREEN | curses.A_BOLD)
+                elif sel_agent.get("is_teammate"):
+                    tname = sel_agent.get("teammate_name", "")
+                    header = f"{sid_short} \u00b7 {tname} \u00b7 {dur}"
+                    safe_add(stdscr, pr, rx + 2, header[:rw - 4], rw_abs, CYAN | curses.A_BOLD)
+                elif sel_agent.get("is_stat"):
+                    safe_add(stdscr, pr, rx + 2, sel_agent.get("stat_label", "")[:rw - 4], rw_abs, CYAN | curses.A_BOLD)
+                else:
+                    atype = sel_agent.get("agent_type") or "agent"
+                    header = f"{sid_short} \u00b7 {tag} {atype} \u00b7 {dur}" if tag else f"{sid_short} \u00b7 {atype} \u00b7 {dur}"
+                    safe_add(stdscr, pr, rx + 2, header[:rw - 4], rw_abs, MAGENTA | curses.A_BOLD)
+                pr += 1
+                safe_add(stdscr, pr, rx + 2, SYMBOLS["h"] * (rw - 4), rw_abs, DIM)
+                pr += 1
+                # Tree below header
+                _draw_viz_tree(stdscr, pr, rx, panel_y + panel_h - pr, rw, cache, state)
+            else:
+                _draw_viz_tree(stdscr, panel_y, rx, panel_h, rw, cache, state)
+
+        elif viz_mode == "gantt":
+            _draw_viz_gantt(stdscr, panel_y, rx, panel_h, rw, cache, state)
+
+        elif state.get("game_of_life") and state.get("viz_mode", 0) >= len(VIZ_MODES):
+            # Game of Life
             life_sid = None
             if sel_agent and sel_agent.get("is_session"):
                 life_sid = sel_agent["session_id"]
@@ -1953,52 +1969,51 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                 life_sid = active_all[0]["session_id"]
             if not life_sid:
                 life_sid = "idle"
-            if life_sid:
-                char_w = rw - 4
-                char_h = viz_rh - 2
-                grid_rows = char_h * 4
-                grid_cols = char_w * 2
-                life_grids = state.setdefault("life_grids", {})
-                if life_sid not in life_grids:
-                    sess_info = session_lookup.get(life_sid, {})
-                    seed_str = (sess_info.get("prompt", "") or "") + life_sid
-                    random.seed(hash(seed_str))
-                    life_grids[life_sid] = {"grid": life_init(grid_rows, grid_cols, 0.25),
-                                            "size": (grid_rows, grid_cols), "gen": 0}
-                    random.seed()
-                elif life_grids[life_sid]["size"] != (grid_rows, grid_cols):
-                    old_grid = life_grids[life_sid]["grid"]
-                    old_r, old_c = life_grids[life_sid]["size"]
-                    new_grid = [[False] * grid_cols for _ in range(grid_rows)]
-                    for r in range(min(old_r, grid_rows)):
-                        for c in range(min(old_c, grid_cols)):
-                            new_grid[r][c] = old_grid[r][c]
-                    life_grids[life_sid]["grid"] = new_grid
-                    life_grids[life_sid]["size"] = (grid_rows, grid_cols)
-                lg = life_grids[life_sid]
-                for _ in range(5):
-                    lg["grid"] = life_step(lg["grid"], grid_rows, grid_cols)
-                    lg["gen"] += 1
-                alive = sum(sum(row) for row in lg["grid"])
-                if alive < 5:
-                    sess_info = session_lookup.get(life_sid, {})
-                    seed_str = (sess_info.get("prompt", "") or "") + life_sid + str(lg["gen"])
-                    random.seed(hash(seed_str))
-                    lg["grid"] = life_init(grid_rows, grid_cols, 0.25)
-                    random.seed()
-                _life_colors = [DIM, DIM, CYAN, CYAN, GREEN, GREEN, YELLOW, YELLOW, YELLOW]
-                lines = life_render(lg["grid"], grid_rows, grid_cols, char_w, char_h)
-                lr = viz_y + 1
-                for row in lines:
-                    if lr >= viz_y + viz_rh - 1:
+            char_w = rw - 4
+            char_h = panel_h
+            grid_rows = char_h * 4
+            grid_cols = char_w * 2
+            life_grids = state.setdefault("life_grids", {})
+            if life_sid not in life_grids:
+                sess_info = session_lookup.get(life_sid, {})
+                seed_str = (sess_info.get("prompt", "") or "") + life_sid
+                random.seed(hash(seed_str))
+                life_grids[life_sid] = {"grid": life_init(grid_rows, grid_cols, 0.25),
+                                        "size": (grid_rows, grid_cols), "gen": 0}
+                random.seed()
+            elif life_grids[life_sid]["size"] != (grid_rows, grid_cols):
+                old_grid = life_grids[life_sid]["grid"]
+                old_r, old_c = life_grids[life_sid]["size"]
+                new_grid = [[False] * grid_cols for _ in range(grid_rows)]
+                for r in range(min(old_r, grid_rows)):
+                    for c in range(min(old_c, grid_cols)):
+                        new_grid[r][c] = old_grid[r][c]
+                life_grids[life_sid]["grid"] = new_grid
+                life_grids[life_sid]["size"] = (grid_rows, grid_cols)
+            lg = life_grids[life_sid]
+            for _ in range(5):
+                lg["grid"] = life_step(lg["grid"], grid_rows, grid_cols)
+                lg["gen"] += 1
+            alive = sum(sum(row) for row in lg["grid"])
+            if alive < 5:
+                sess_info = session_lookup.get(life_sid, {})
+                seed_str = (sess_info.get("prompt", "") or "") + life_sid + str(lg["gen"])
+                random.seed(hash(seed_str))
+                lg["grid"] = life_init(grid_rows, grid_cols, 0.25)
+                random.seed()
+            _life_colors = [DIM, DIM, CYAN, CYAN, GREEN, GREEN, YELLOW, YELLOW, YELLOW]
+            lines = life_render(lg["grid"], grid_rows, grid_cols, char_w, char_h)
+            lr = panel_y
+            for row in lines:
+                if lr >= panel_y + panel_h:
+                    break
+                cx = rx + 2
+                for bch, density in row:
+                    if cx >= rx + rw - 1:
                         break
-                    cx = rx + 2
-                    for bch, density in row:
-                        if cx >= rx + rw - 1:
-                            break
-                        safe_add(stdscr, lr, cx, bch, rx + rw - 1, _life_colors[min(density, 8)])
-                        cx += 1
-                    lr += 1
+                    safe_add(stdscr, lr, cx, bch, rx + rw - 1, _life_colors[min(density, 8)])
+                    cx += 1
+                lr += 1
 
     # -- Footer (full width) --
     status = state.get("status_msg", "")
