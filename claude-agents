@@ -1333,7 +1333,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
     # Layout
     split = w >= 100
-    lw = (w * 3) // 5 if split else w
+    lw = w // 2 if split else w
     rw = w - lw if split else 0
     rx = lw  # right panel x position
 
