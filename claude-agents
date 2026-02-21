@@ -1555,7 +1555,10 @@ def main(stdscr, game_of_life=False):
             elif state["selected"] > 0:
                 state["selected"] -= 1
         elif ch in (ord("l"), curses.KEY_RIGHT):
-            if state["focus"] == "left" and state["selected"] >= 0:
+            sel = state["selected"]
+            items = state["visible_items"]
+            sel_is_stat = 0 <= sel < len(items) and items[sel].get("is_stat")
+            if state["focus"] == "left" and sel >= 0 and not sel_is_stat:
                 state["focus"] = "right"
                 state["detail_scroll"] = 0
             else:
