@@ -647,12 +647,18 @@ def _detail_content_height(sel_agent, pw, cache):
     return 2 + 8
 
 
-def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache):
+def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
     """Render DETAIL content into a region defined by (pr, col) to (max_row, max_col)."""
     pw = max_col - col  # available width
+    base_pr = pr  # top of drawable area
 
     def P(r, c, text, attr=0):
-        safe_add(stdscr, r, c, text, max_col, attr)
+        sr = r - scroll  # screen row after scroll
+        if base_pr <= sr < max_row:
+            safe_add(stdscr, sr, c, text, max_col, attr)
+
+    # Adjust max_row for virtual space (allow pr to go beyond visible area)
+    max_row_virtual = max_row + scroll
 
     if sel_agent and sel_agent.get("is_session"):
         # Rich session detail
@@ -669,7 +675,7 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache):
         pr += 1
 
         # Prompt
-        if prompt_text and pr < max_row:
+        if prompt_text and pr < max_row_virtual:
             display_prompt = prompt_text.replace("\n", " ").strip()
             if display_prompt.startswith("<"):
                 display_prompt = "(system prompt)"
@@ -678,10 +684,10 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache):
 
         # Tool event timeline
         session_tools = cache.get("session_tools", {}).get(sid, [])
-        if session_tools and pr < max_row:
+        if session_tools and pr < max_row_virtual:
             pr += 1
             for ev in session_tools:
-                if pr >= max_row:
+                if pr >= max_row_virtual:
                     break
                 ts = fmt_time(ev.get("created_at"))
                 name = ev["tool_name"]
@@ -729,7 +735,7 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache):
             pr += 1  # blank line
 
             for t in sorted_tasks:
-                if pr >= max_row:
+                if pr >= max_row_virtual:
                     break
                 status = t.get("status", "")
                 blocked = bool(t.get("blockedBy")) and status == "pending"
@@ -766,8 +772,8 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache):
         pr += 1
         P(pr, col, SYMBOLS["h"] * pw, DIM)
         pr += 1
-        for line in read_preview_lines(sel_agent, max_row - pr):
-            if pr >= max_row:
+        for line in read_preview_lines(sel_agent, max_row_virtual - pr):
+            if pr >= max_row_virtual:
                 break
             P(pr, col, line[:pw], WHITE)
             pr += 1
@@ -1338,9 +1344,13 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         if sel_agent:
             content_rows = _detail_content_height(sel_agent, rw - 4, cache)
             detail_h = min(content_rows + 2, total_rh - 4)  # +2 for box borders, leave room for Life
-            draw_box(stdscr, content_top, rx, detail_h, rw, title="DETAIL")
+            focused = state.get("focus") == "right"
+            title_str = "\u25b6 DETAIL" if focused else "DETAIL"
+            draw_box(stdscr, content_top, rx, detail_h, rw, title=title_str,
+                     border_attr=CYAN if focused else 0)
+            scroll = state.get("detail_scroll", 0) if focused else 0
             _draw_detail(stdscr, content_top + 1, rx + 2, content_top + detail_h - 1, rx + rw - 1,
-                         sel_agent, cache)
+                         sel_agent, cache, scroll=scroll)
         else:
             detail_h = 0
 
@@ -1426,7 +1436,10 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
     if status and time.time() < state.get("status_until", 0):
         safe_add(stdscr, h - 1, 0, f" {status}", w, YELLOW)
     elif visible_items:
-        safe_add(stdscr, h - 1, 0, " j/k=select  h/l=stats range  esc=deselect  enter=open  q=quit", w, DIM)
+        if state.get("focus") == "right":
+            safe_add(stdscr, h - 1, 0, " j/k=scroll detail  h=back  esc=back  q=quit", w, DIM)
+        else:
+            safe_add(stdscr, h - 1, 0, " j/k=select  l=detail  h/l=stats range  esc=deselect  q=quit", w, DIM)
     else:
         safe_add(stdscr, h - 1, 0, " q=quit", w, DIM)
     stdscr.refresh()
@@ -1444,7 +1457,8 @@ def main(stdscr, game_of_life=False):
 
     init_colors()
 
-    state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_until": 0.0, "stats_range": 2, "game_of_life": game_of_life}
+    state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_until": 0.0,
+                   "stats_range": 2, "game_of_life": game_of_life, "focus": "left", "detail_scroll": 0}
     cache: dict = {}
     refresh_data(cache, state["stats_range"])
     frame = 0
@@ -1456,42 +1470,62 @@ def main(stdscr, game_of_life=False):
         ch = stdscr.getch()
         if ch in (ord("q"), ord("Q")):
             break
-        elif ch == 27:  # Esc — deselect (back to stats view)
-            state["selected"] = -1
-        elif ch in (ord("j"), curses.KEY_DOWN):
-            agents = state["visible_items"]
-            if agents:
-                state["selected"] = min(state["selected"] + 1, len(agents) - 1) if state["selected"] >= 0 else 0
-        elif ch in (ord("k"), curses.KEY_UP):
-            if state["selected"] > 0:
-                state["selected"] -= 1
-        elif ch in (ord("l"), curses.KEY_RIGHT):
-            old = state["stats_range"]
-            state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
-            if state["stats_range"] != old:
-                refresh_data(cache, state["stats_range"])
-        elif ch in (ord("h"), curses.KEY_LEFT):
-            old = state["stats_range"]
-            state["stats_range"] = max(old - 1, 0)
-            if state["stats_range"] != old:
-                refresh_data(cache, state["stats_range"])
-        elif ch in (10, 13, curses.KEY_ENTER):
-            idx = state["selected"]
-            agents = state["visible_items"]
-            if 0 <= idx < len(agents):
-                item = agents[idx]
-                # Agents (running or history) have transcripts to open
-                is_agent = not item.get("is_session") and not item.get("is_teammate")
-                is_history_agent = item.get("is_history") and item.get("kind") == "agent"
-                if is_agent or is_history_agent:
-                    short = item["agent_id"][:7]
-                    try:
-                        err = open_agent_in_iterm2(item)
-                        atype = (item.get("agent_type") or "agent")[:12]
-                        state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
-                    except Exception as e:
-                        state["status_msg"] = str(e)[:40]
-                    state["status_until"] = time.time() + 3
+        elif ch == 27:  # Esc
+            if state["focus"] == "right":
+                state["focus"] = "left"
+                state["detail_scroll"] = 0
+            else:
+                state["selected"] = -1
+        elif state["focus"] == "right":
+            # Right panel focused: j/k scrolls detail, h goes back
+            if ch in (ord("j"), curses.KEY_DOWN):
+                state["detail_scroll"] = state.get("detail_scroll", 0) + 1
+            elif ch in (ord("k"), curses.KEY_UP):
+                state["detail_scroll"] = max(0, state.get("detail_scroll", 0) - 1)
+            elif ch in (ord("h"), curses.KEY_LEFT):
+                state["focus"] = "left"
+                state["detail_scroll"] = 0
+        else:
+            # Left panel focused
+            if ch in (ord("j"), curses.KEY_DOWN):
+                agents = state["visible_items"]
+                if agents:
+                    state["selected"] = min(state["selected"] + 1, len(agents) - 1) if state["selected"] >= 0 else 0
+            elif ch in (ord("k"), curses.KEY_UP):
+                if state["selected"] > 0:
+                    state["selected"] -= 1
+            elif ch in (ord("l"), curses.KEY_RIGHT):
+                if state["selected"] >= 0:
+                    # Enter detail panel
+                    state["focus"] = "right"
+                    state["detail_scroll"] = 0
+                else:
+                    # Cycle stats range
+                    old = state["stats_range"]
+                    state["stats_range"] = min(old + 1, len(STATS_RANGES) - 1)
+                    if state["stats_range"] != old:
+                        refresh_data(cache, state["stats_range"])
+            elif ch in (ord("h"), curses.KEY_LEFT):
+                old = state["stats_range"]
+                state["stats_range"] = max(old - 1, 0)
+                if state["stats_range"] != old:
+                    refresh_data(cache, state["stats_range"])
+            elif ch in (10, 13, curses.KEY_ENTER):
+                idx = state["selected"]
+                agents = state["visible_items"]
+                if 0 <= idx < len(agents):
+                    item = agents[idx]
+                    is_agent = not item.get("is_session") and not item.get("is_teammate")
+                    is_history_agent = item.get("is_history") and item.get("kind") == "agent"
+                    if is_agent or is_history_agent:
+                        short = item["agent_id"][:7]
+                        try:
+                            err = open_agent_in_iterm2(item)
+                            atype = (item.get("agent_type") or "agent")[:12]
+                            state["status_msg"] = err if err else f"opened tab: {atype}-{short}"
+                        except Exception as e:
+                            state["status_msg"] = str(e)[:40]
+                        state["status_until"] = time.time() + 3
 
 
 def self_update():
