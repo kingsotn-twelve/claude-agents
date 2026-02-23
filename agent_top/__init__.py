@@ -162,7 +162,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
         if "pid" not in cols:
             conn.execute("ALTER TABLE prompt ADD COLUMN pid INTEGER")
         te_cols = {r[1] for r in conn.execute("PRAGMA table_info(tool_event)")}
-        for col, ctype in [("tool_input", "TEXT"), ("tool_response", "TEXT"), ("tool_use_id", "TEXT"), ("duration_ms", "INTEGER")]:
+        for col, ctype in [("tool_input", "TEXT"), ("tool_response", "TEXT"), ("tool_use_id", "TEXT"), ("duration_ms", "INTEGER"), ("is_error", "INTEGER DEFAULT 0"), ("error_message", "TEXT")]:
             if col not in te_cols:
                 conn.execute(f"ALTER TABLE tool_event ADD COLUMN {col} {ctype}")
 
@@ -278,7 +278,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
             try:
                 rows = []
                 for row in conn.execute(
-                    """SELECT tool_name, tool_label, created_at, tool_input, tool_response, duration_ms FROM tool_event
+                    """SELECT tool_name, tool_label, created_at, tool_input, tool_response, duration_ms, is_error, error_message FROM tool_event
                        WHERE session_id = ?
                        ORDER BY created_at DESC
                        LIMIT 200""",
