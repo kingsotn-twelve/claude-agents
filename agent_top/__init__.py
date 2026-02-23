@@ -754,6 +754,130 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
         safe_add(stdscr, pr, x + label_w + 2, axis_label[:bar_w], rw_abs, DIM)
 
 
+def _format_smart_summary(tool_name, raw_response, max_lines=8, max_width=70):
+    """Parse tool response into a smart summary based on tool type."""
+    if not raw_response:
+        return ["(no response)"]
+    try:
+        resp = json.loads(raw_response) if isinstance(raw_response, str) else raw_response
+    except Exception:
+        lines = str(raw_response).replace("\n", " ")[:max_width * max_lines]
+        return [lines[i:i+max_width] for i in range(0, len(lines), max_width)][:max_lines]
+
+    result = []
+    resp_str = str(resp)
+
+    if tool_name == "Read":
+        content = resp.get("content", resp_str) if isinstance(resp, dict) else resp_str
+        lines = content.split("\n") if isinstance(content, str) else [resp_str]
+        total = len(lines)
+        if total <= max_lines:
+            result = [l[:max_width] for l in lines]
+        else:
+            result = [l[:max_width] for l in lines[:3]]
+            result.append(f"  ... ({total} lines total)")
+            result.extend(l[:max_width] for l in lines[-2:])
+    elif tool_name == "Bash":
+        output = resp.get("output", resp.get("stdout", resp_str)) if isinstance(resp, dict) else resp_str
+        lines = output.split("\n") if isinstance(output, str) else [str(output)]
+        exit_code = resp.get("exitCode", resp.get("exit_code", "")) if isinstance(resp, dict) else ""
+        if exit_code != "":
+            result.append(f"exit {exit_code}")
+        tail = lines[-(max_lines - len(result)):] if len(lines) > max_lines else lines
+        result.extend(l[:max_width] for l in tail)
+    elif tool_name == "Grep":
+        if isinstance(resp, dict):
+            matches = resp.get("matches", resp.get("files", []))
+            if isinstance(matches, list):
+                result.append(f"{len(matches)} matches")
+                for m in matches[:5]:
+                    result.append(f"  {str(m)[:max_width - 2]}")
+            else:
+                result.append(str(matches)[:max_width])
+        else:
+            lines = resp_str.split("\n")
+            result.append(f"{len(lines)} matches")
+            result.extend(l[:max_width] for l in lines[:5])
+    elif tool_name in ("Edit", "Write"):
+        if isinstance(resp, dict):
+            success = resp.get("success", True)
+            fp = resp.get("filePath", resp.get("file_path", ""))
+            result.append(f"{'ok' if success else 'FAIL'}: {os.path.basename(fp)}" if fp else ("ok" if success else "FAIL"))
+        else:
+            result.append(resp_str[:max_width])
+    elif tool_name == "Glob":
+        if isinstance(resp, (list, dict)):
+            files = resp if isinstance(resp, list) else resp.get("files", resp.get("matches", []))
+            if isinstance(files, list):
+                result.append(f"{len(files)} files")
+                for f in files[:5]:
+                    result.append(f"  {str(f)[:max_width - 2]}")
+            else:
+                result.append(str(files)[:max_width])
+        else:
+            result.append(resp_str[:max_width])
+    else:
+        flat = resp_str.replace("\n", " ")
+        result = [flat[i:i+max_width] for i in range(0, min(len(flat), max_width * max_lines), max_width)][:max_lines]
+
+    return result[:max_lines] if result else ["(empty)"]
+
+
+def _render_tool_expansion(stdscr, ev, pr, col, rw, max_row, is_error=False):
+    """Render expanded tool detail lines. Returns number of rows consumed."""
+    color = RED if is_error else DIM
+    resp_color = RED if is_error else GREEN
+    separator = "\u254c" * min(55, rw - col - 2)
+    rows_drawn = 0
+    max_width = rw - col - 4
+
+    def draw(row, text, c):
+        nonlocal rows_drawn, pr
+        if row < max_row:
+            safe_add(stdscr, row, col, text[:max_width + 4], rw, c)
+            rows_drawn += 1
+
+    # Top separator
+    draw(pr, f"  {separator}", color)
+    pr += 1
+
+    # Input section
+    raw_input = ev.get("_raw_input")
+    if raw_input:
+        try:
+            ti = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+            for k, v in list(ti.items())[:6]:
+                vs = str(v).replace("\n", " ")[:max_width - len(k) - 4]
+                draw(pr, f"  {k}: {vs}", color)
+                pr += 1
+        except Exception:
+            draw(pr, f"  {str(raw_input)[:max_width]}", color)
+            pr += 1
+
+    # Response/Error section
+    if is_error:
+        err_msg = ev.get("_error_message", "")
+        if err_msg:
+            draw(pr, "  ERROR", RED | curses.A_BOLD)
+            pr += 1
+            for line in err_msg.split("\n")[:8]:
+                draw(pr, f"  {line[:max_width]}", RED)
+                pr += 1
+    else:
+        raw_resp = ev.get("_raw_response")
+        tool_name = ev.get("_tool_name", "")
+        summary_lines = _format_smart_summary(tool_name, raw_resp, max_lines=8, max_width=max_width - 4)
+        for line in summary_lines:
+            draw(pr, f"  \u2192 {line}", resp_color)
+            pr += 1
+
+    # Bottom separator
+    draw(pr, f"  {separator}", color)
+    rows_drawn += 1
+
+    return rows_drawn
+
+
 def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
     """Interleaved timeline: prompts, tools, and agents in chronological order (newest first)."""
     active_all = cache.get("active_all", [])
@@ -786,10 +910,19 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
     # Tools
     for t in (session_tools.get(target_sid, []) or tool_events.get(target_sid, [])):
         dur_ms = t.get("duration_ms")
-        dur_str = f" {dur_ms}ms" if dur_ms else ""
         desc = friendly_tool(t["tool_name"], t.get("tool_label", ""))
-        timeline.append({"ts": t.get("created_at", ""), "kind": "tool", "text": f"{desc}{dur_str}",
-                         "_raw_input": t.get("tool_input"), "_tool_name": t.get("tool_name")})
+        is_err = bool(t.get("is_error"))
+        timeline.append({
+            "ts": t.get("created_at", ""),
+            "kind": "tool",
+            "text": desc,
+            "_raw_input": t.get("tool_input"),
+            "_raw_response": t.get("tool_response"),
+            "_tool_name": t.get("tool_name"),
+            "_duration_ms": dur_ms,
+            "_is_error": is_err,
+            "_error_message": t.get("error_message", ""),
+        })
     # Agents
     children = [a for a in r_agents if a["session_id"] == target_sid and a.get("agent_type")]
     completed = [a for a in c_agents if a["session_id"] == target_sid and a.get("agent_type")][:5]
@@ -846,8 +979,10 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         cursor = max(0, len(timeline) - 1)
         state["tree_cursor"] = cursor
 
-    # Auto-scroll to keep cursor visible
-    visible_rows = h
+    # Estimate expansion rows for scroll calculation
+    expanded_idx = state.get("_expanded_tool", -1)
+    expansion_height = 12 if 0 <= expanded_idx < len(timeline) else 0
+    visible_rows = max(1, h - expansion_height)
     scroll = state.get("detail_scroll", 0)
     if cursor < scroll:
         scroll = cursor
@@ -889,6 +1024,27 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
                 color = DIM
         else:
             color = DIM
+
+        # Error override
+        is_err = ev.get("_is_error", False)
+        if is_err and kind == "tool":
+            icon = "\u2717"  # cross mark
+            color = RED
+
+        # Duration string with color
+        dur_ms = ev.get("_duration_ms")
+        dur_color = DIM
+        dur_str = ""
+        if dur_ms is not None and kind == "tool":
+            if dur_ms < 1000:
+                dur_str = f"{dur_ms}ms"
+                dur_color = GREEN
+            elif dur_ms < 5000:
+                dur_str = f"{dur_ms / 1000:.1f}s"
+                dur_color = YELLOW
+            else:
+                dur_str = f"{dur_ms / 1000:.1f}s"
+                dur_color = RED
         ts = fmt_time(ev.get("ts", ""))
         # Indent tools/agents under their prompt
         indent = 0 if kind == "prompt" else 2
@@ -931,7 +1087,20 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
             else:
                 safe_add(stdscr, pr, col_start, ts, rw, DIM)
                 safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color)
+            # Draw duration right-aligned
+            if dur_str:
+                dur_x = x + w - len(dur_str) - 3
+                if dur_x > icon_col + len(text) + 2:
+                    dur_attr = dur_color | (curses.A_REVERSE if is_cursor else 0)
+                    safe_add(stdscr, pr, dur_x, dur_str, rw, dur_attr)
             pr += 1
+            # Render expansion if this tool is expanded
+            if kind == "tool" and state.get("_expanded_tool") == idx:
+                expansion_rows = _render_tool_expansion(
+                    stdscr, ev, pr, col_start, rw, y + h,
+                    is_error=ev.get("_is_error", False)
+                )
+                pr += expansion_rows
 
     if not timeline:
         safe_add(stdscr, y, x + 2, "(no activity)", rw, DIM)
@@ -2249,11 +2418,13 @@ def main(stdscr, game_of_life=False):
             n_modes = len(VIZ_MODES) + (1 if state.get("game_of_life") else 0)
             state["viz_mode"] = (state["viz_mode"] + 1) % n_modes
             state["detail_scroll"] = 0; state["tree_cursor"] = 0
+            state["_expanded_tool"] = -1
             state["focus"] = "right"
         elif ch == 353:  # Shift-Tab — cycle viz mode backward, auto-focus right panel
             n_modes = len(VIZ_MODES) + (1 if state.get("game_of_life") else 0)
             state["viz_mode"] = (state["viz_mode"] - 1) % n_modes
             state["detail_scroll"] = 0; state["tree_cursor"] = 0
+            state["_expanded_tool"] = -1
             state["focus"] = "right"
         elif ch == 27:  # Esc — peek ahead to discard escape sequences (arrow keys etc.)
             stdscr.nodelay(True)
@@ -2263,6 +2434,7 @@ def main(stdscr, game_of_life=False):
                 if state["focus"] == "right":
                     state["focus"] = "left"
                     state["detail_scroll"] = 0; state["tree_cursor"] = 0
+                    state["_expanded_tool"] = -1
                 else:
                     state["selected"] = -1
             # else: was an escape sequence — ignore (arrow keys handled by KEY_UP etc.)
@@ -2301,6 +2473,7 @@ def main(stdscr, game_of_life=False):
                 if state["focus"] == "left" and sel >= 0 and not sel_is_stat:
                     state["focus"] = "right"
                     state["detail_scroll"] = 0; state["tree_cursor"] = 0
+                    state["_expanded_tool"] = -1
                     state["graph_hover"] = 0
                 else:
                     old = state["stats_range"]
@@ -2322,6 +2495,7 @@ def main(stdscr, game_of_life=False):
             elif state["focus"] == "right":
                 state["focus"] = "left"
                 state["detail_scroll"] = 0; state["tree_cursor"] = 0
+                state["_expanded_tool"] = -1
             else:
                 old = state["stats_range"]
                 state["stats_range"] = max(old - 1, 0)
@@ -2337,33 +2511,24 @@ def main(stdscr, game_of_life=False):
                     collapsed.discard(pk)
                 else:
                     collapsed.add(pk)
+                state["_expanded_tool"] = -1
         elif ch in (10, 13, curses.KEY_ENTER):
             if state["focus"] == "left" and state["selected"] >= 0:
                 # Enter focuses detail panel
                 state["focus"] = "right"
                 state["detail_scroll"] = 0; state["tree_cursor"] = 0
+                state["_expanded_tool"] = -1
             elif state["focus"] == "right":
-                # Enter on tree item: open file if it's a Read/Edit/Write tool
                 tl = state.get("_tree_timeline", [])
                 tc = state.get("tree_cursor", 0)
                 if 0 <= tc < len(tl):
                     ev = tl[tc]
-                    if ev.get("kind") == "tool" and ev.get("_raw_input"):
-                        try:
-                            ti = json.loads(ev["_raw_input"]) if isinstance(ev["_raw_input"], str) else ev["_raw_input"]
-                            fp = ti.get("file_path", "")
-                        except Exception:
-                            fp = ""
-                        if fp:
-                            try:
-                                subprocess.Popen([
-                                    "osascript", "-e",
-                                    f'tell application "iTerm2" to tell current window to create tab with default profile command "less +G \\"{fp}\\""'
-                                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                state["status_msg"] = f"opened: {os.path.basename(fp)}"
-                            except Exception as e:
-                                state["status_msg"] = str(e)[:40]
-                            state["status_until"] = time.time() + 3
+                    if ev.get("kind") == "tool":
+                        # Toggle expand/collapse
+                        if state.get("_expanded_tool") == tc:
+                            state["_expanded_tool"] = -1  # collapse
+                        else:
+                            state["_expanded_tool"] = tc  # expand
 
 
 def self_update():
