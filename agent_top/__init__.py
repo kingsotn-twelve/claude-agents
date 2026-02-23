@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -160,7 +160,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
 
         # Active sessions: latest prompt per session.
         # A session is "active" if un-stopped AND one of:
-        #   - has lastWaitUserAt set (terminal is open, waiting for input — no time limit)
+        #   - has lastWaitUserAt set (terminal is open, waiting for input within last 30 min)
         #   - had tool activity in the last 30 min (actively running)
         #   - created within the last 5 min (grace period before first tool call)
         # Sessions only disappear when Stop fires (terminal closed) or ghost detection (no
@@ -173,7 +173,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
                    FROM prompt
                    WHERE stoped_at IS NULL
                      AND (
-                       lastWaitUserAt > datetime('now', '-2 hours')
+                       lastWaitUserAt > datetime('now', '-30 minutes')
                        OR created_at > datetime('now', '-5 minutes')
                        OR session_id IN (
                          SELECT DISTINCT session_id FROM tool_event
