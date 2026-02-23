@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-claude-agents — live terminal dashboard for Claude Code sessions & agents.
+agent-top — live terminal dashboard for Claude Code sessions & agents.
 btop-style TUI with rounded box panels, braille sparklines, and tree views.
-Run in a separate pane: claude-agents
+Run in a separate pane: agent-top
 """
 
 import argparse
@@ -21,7 +21,7 @@ VERSION = "0.9.0"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
-DB_PATH = os.environ.get("CLAUDE_AGENTS_DB") or os.path.expanduser("~/.claude/ccnotify/ccnotify.db")
+DB_PATH = os.environ.get("AGENT_TOP_DB") or os.path.expanduser("~/.claude/ccnotify/ccnotify.db")
 
 MAX_COMPLETED_AGENTS = 10
 MAX_HISTORY = 20
@@ -2151,7 +2151,7 @@ def main(stdscr, game_of_life=False):
 def self_update():
     """Pull latest from GitHub and replace the running script."""
     import urllib.request
-    raw_url = "https://raw.githubusercontent.com/kingsotn-twelve/claude-agents/main/claude-agents"
+    raw_url = "https://raw.githubusercontent.com/kingsotn-twelve/agent-top/main/agent-top"
     try:
         with urllib.request.urlopen(raw_url, timeout=10) as resp:
             new_src = resp.read().decode()
@@ -2180,14 +2180,14 @@ def self_update():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog="claude-agents",
+        prog="agent-top",
         description="Live terminal dashboard for Claude Code sessions & agents.\n"
                     "Tree view: agents nested under sessions, tool feed for agentless sessions.\n"
                     "Run in a separate pane alongside Claude Code.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--version", action="version", version=f"claude-agents v{VERSION}"
+        "--version", action="version", version=f"agent-top v{VERSION}"
     )
     parser.add_argument(
         "--update", action="store_true", help="self-update from GitHub"

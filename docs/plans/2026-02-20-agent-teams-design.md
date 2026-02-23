@@ -5,7 +5,7 @@
 
 ## Problem
 
-`claude-agents` monitors subagents (spawned via `Task` tool, `SubagentStart`/`SubagentStop` hooks) but not agent teams. Agent team teammates are separate, independent Claude Code sessions — not subagents. They show up as anonymous solo sessions in the dashboard with no grouping, and the shared task list is invisible.
+`agent-top` monitors subagents (spawned via `Task` tool, `SubagentStart`/`SubagentStop` hooks) but not agent teams. Agent team teammates are separate, independent Claude Code sessions — not subagents. They show up as anonymous solo sessions in the dashboard with no grouping, and the shared task list is invisible.
 
 ## Key Distinctions
 
@@ -31,7 +31,7 @@
 - `handle_task_completed()`: send desktop notification "Task done: {subject}"
 - Register `TeammateIdle` and `TaskCompleted` in `settings.json`
 
-### `claude-agents` Dashboard Changes
+### `agent-top` Dashboard Changes
 
 - `query_teams()`: scans team config files + task files, cross-refs with DB
 - **TEAMS section** above SESSIONS — team members excluded from SESSIONS

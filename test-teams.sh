@@ -6,7 +6,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-DB="${CLAUDE_AGENTS_DB:-$HOME/.claude/ccnotify/ccnotify.db}"
+DB="${AGENT_TOP_DB:-$HOME/.claude/ccnotify/ccnotify.db}"
 DURATION="${1:-20}"
 
 TEAM_NAME="test-team"
@@ -71,7 +71,7 @@ sqlite3 "$DB" "INSERT INTO prompt (session_id, prompt, cwd) VALUES
     ('$SESSION_REVIEWER',    'team:$TEAM_NAME reviewer',    '$DIR');" 2>/dev/null || true
 
 echo "sessions inserted, watching dashboard for ${DURATION}s..."
-echo "(open claude-agents in another pane to see the TEAMS section)"
+echo "(open agent-top in another pane to see the TEAMS section)"
 echo ""
 
 # 4. Simulate task progress mid-way through

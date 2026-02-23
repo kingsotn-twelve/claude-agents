@@ -8,7 +8,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-DB="${CLAUDE_AGENTS_DB:-$HOME/.claude/ccnotify/ccnotify.db}"
+DB="${AGENT_TOP_DB:-$HOME/.claude/ccnotify/ccnotify.db}"
 
 COUNT="${1:-5}"
 MIN="${2:-5}"

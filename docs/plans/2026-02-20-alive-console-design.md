@@ -8,7 +8,7 @@
 
 ## Vision
 
-The claude-agents dashboard is not a monitoring tool. It is a living thing.
+The agent-top dashboard is not a monitoring tool. It is a living thing.
 
 Your agents are alive — they spawn, work, struggle, finish, and die. The dashboard's job is to surface that real vitality, not paint cosmetic life on top of dead data. The console is how you tend to them.
 

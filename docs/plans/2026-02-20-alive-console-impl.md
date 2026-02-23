@@ -15,8 +15,8 @@
 ### Task 1: Add `math` import and alive-layer state fields
 
 **Files:**
-- Modify: `claude-agents:8-18` (imports)
-- Modify: `claude-agents:2109-2111` (state dict)
+- Modify: `agent-top:8-18` (imports)
+- Modify: `agent-top:2109-2111` (state dict)
 
 **Step 1: Add math import**
 
@@ -42,13 +42,13 @@ state: dict = {"selected": -1, "visible_items": [], "status_msg": "", "status_un
 
 **Step 3: Run to verify no crash**
 
-Run: `python3 claude-agents --help` (or just launch briefly and quit with `q`)
+Run: `python3 agent-top --help` (or just launch briefly and quit with `q`)
 Expected: Dashboard starts without errors.
 
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: add math import and alive-layer state fields"
 ```
 
@@ -57,8 +57,8 @@ git commit -m "feat: add math import and alive-layer state fields"
 ### Task 2: Breathing borders — dynamic `draw_box()` brightness
 
 **Files:**
-- Modify: `claude-agents:994-1011` (`draw_box()` function)
-- Modify: `claude-agents:91-128` (`init_colors()` — add breathing color pairs)
+- Modify: `agent-top:994-1011` (`draw_box()` function)
+- Modify: `agent-top:91-128` (`init_colors()` — add breathing color pairs)
 
 **Step 1: Add breathing color pairs in `init_colors()`**
 
@@ -153,7 +153,7 @@ Run the dashboard. Borders should subtly pulse between two brightness levels. If
 **Step 5: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: breathing borders driven by agent activity rate"
 ```
 
@@ -162,7 +162,7 @@ git commit -m "feat: breathing borders driven by agent activity rate"
 ### Task 3: Heartbeat cursor in footer area
 
 **Files:**
-- Modify: `claude-agents:2081-2094` (footer rendering)
+- Modify: `agent-top:2081-2094` (footer rendering)
 
 **Step 1: Add heartbeat cursor to footer**
 
@@ -192,7 +192,7 @@ Run dashboard. Bottom-right should show a blinking dot. Speed varies with agent 
 **Step 3: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: heartbeat cursor — blinking dot synced to agent activity"
 ```
 
@@ -201,7 +201,7 @@ git commit -m "feat: heartbeat cursor — blinking dot synced to agent activity"
 ### Task 4: Text shimmer — CRT flicker effect
 
 **Files:**
-- Modify: `claude-agents:1370` area (in `draw()`, at the end before `stdscr.refresh()`)
+- Modify: `agent-top:1370` area (in `draw()`, at the end before `stdscr.refresh()`)
 
 **Step 1: Add shimmer logic at end of draw(), before stdscr.refresh()**
 
@@ -235,7 +235,7 @@ Run dashboard. Occasionally, a single character should dim for one frame then re
 **Step 3: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: text shimmer — subtle CRT flicker effect"
 ```
 
@@ -244,8 +244,8 @@ git commit -m "feat: text shimmer — subtle CRT flicker effect"
 ### Task 5: Warmth gradient — session color based on recency
 
 **Files:**
-- Modify: `claude-agents:91-128` (`init_colors()` — add warmth color pairs)
-- Modify: `claude-agents` session rendering section (~line 1551-1640)
+- Modify: `agent-top:91-128` (`init_colors()` — add warmth color pairs)
+- Modify: `agent-top` session rendering section (~line 1551-1640)
 
 **Step 1: Add warmth color helper**
 
@@ -297,7 +297,7 @@ Run dashboard with active agents. Active session sparklines should be yellow/gre
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: warmth gradient — session sparklines color by recency"
 ```
 
@@ -306,7 +306,7 @@ git commit -m "feat: warmth gradient — session sparklines color by recency"
 ### Task 6: Idle drift — Severance-style number breathing in STATS
 
 **Files:**
-- Modify: `claude-agents` STATS panel rendering (~line 1786-1891)
+- Modify: `agent-top` STATS panel rendering (~line 1786-1891)
 
 **Step 1: Add idle drift to STATS numbers**
 
@@ -344,7 +344,7 @@ Run dashboard. Wait 30+ seconds without pressing anything. Occasionally, a stat 
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: idle drift — Severance-style number breathing in STATS panel"
 ```
 
@@ -355,9 +355,9 @@ git commit -m "feat: idle drift — Severance-style number breathing in STATS pa
 ### Task 7: Console panel layout and empty rendering
 
 **Files:**
-- Modify: `claude-agents:2109-2111` (state dict — add console fields)
-- Modify: `claude-agents:1459-1488` (panel height calculation)
-- Modify: `claude-agents:2081-2094` (draw console before footer)
+- Modify: `agent-top:2109-2111` (state dict — add console fields)
+- Modify: `agent-top:1459-1488` (panel height calculation)
+- Modify: `agent-top:2081-2094` (draw console before footer)
 
 **Step 1: Add console state fields**
 
@@ -477,7 +477,7 @@ Run dashboard. A "CONSOLE" box should appear at the bottom with `> ` prompt insi
 **Step 7: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: console panel — empty layout with breathing borders and blinking cursor"
 ```
 
@@ -486,7 +486,7 @@ git commit -m "feat: console panel — empty layout with breathing borders and b
 ### Task 8: Console input handling — typing, editing, focus
 
 **Files:**
-- Modify: `claude-agents:2120-2222` (keyboard input handling in main loop)
+- Modify: `agent-top:2120-2222` (keyboard input handling in main loop)
 
 **Step 1: Add console focus toggle**
 
@@ -573,7 +573,7 @@ Run dashboard. Press `/` to focus console. Type text — it should appear after 
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: console input — typing, editing, history recall, focus toggle"
 ```
 
@@ -582,7 +582,7 @@ git commit -m "feat: console input — typing, editing, history recall, focus to
 ### Task 9: Console fast paths — local query handling
 
 **Files:**
-- Modify: `claude-agents` (add `_handle_console_query()` function)
+- Modify: `agent-top` (add `_handle_console_query()` function)
 
 **Step 1: Add `_handle_console_query()` function**
 
@@ -669,7 +669,7 @@ Run dashboard. Press `/`, type `help`, press Enter. Should show command list. Tr
 **Step 3: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: console fast paths — agents, sessions, tools, history, help, clear"
 ```
 
@@ -678,8 +678,8 @@ git commit -m "feat: console fast paths — agents, sessions, tools, history, he
 ### Task 10: Console Claude API integration — raw urllib
 
 **Files:**
-- Modify: `claude-agents` (add `_console_api_call()` function)
-- Modify: `claude-agents:8-18` (add `import threading`, `import urllib.request`, `import urllib.error`)
+- Modify: `agent-top` (add `_console_api_call()` function)
+- Modify: `agent-top:8-18` (add `import threading`, `import urllib.request`, `import urllib.error`)
 
 **Step 1: Add imports**
 
@@ -898,7 +898,7 @@ Without API key: should show "no ANTHROPIC_API_KEY" message.
 **Step 5: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: console Claude API — background queries with plan execution and widget rendering"
 ```
 
@@ -945,7 +945,7 @@ Press `/`, type `agents`. The first line of the response should type out charact
 **Step 5: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: character-by-character typing effect in console responses"
 ```
 
@@ -1011,7 +1011,7 @@ If any agent has been running for 2+ minutes with no tool events, a dim message 
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: proactive surfacing — console alerts for stuck agents"
 ```
 
@@ -1020,7 +1020,7 @@ git commit -m "feat: proactive surfacing — console alerts for stuck agents"
 ### Task 13: Update footer keybindings and final polish
 
 **Files:**
-- Modify: `claude-agents:2081-2094` (footer)
+- Modify: `agent-top:2081-2094` (footer)
 
 **Step 1: Update footer hints to include console**
 
@@ -1065,7 +1065,7 @@ Run the dashboard end-to-end and verify:
 **Step 4: Commit**
 
 ```bash
-git add claude-agents
+git add agent-top
 git commit -m "feat: v0.8.0 — the alive console"
 ```
 

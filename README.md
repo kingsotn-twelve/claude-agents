@@ -1,4 +1,4 @@
-# claude-agents
+# agent-top
 
 Live terminal dashboard for monitoring Claude Code sessions and agents.
 
@@ -7,12 +7,12 @@ Live terminal dashboard for monitoring Claude Code sessions and agents.
 ## Setup
 
 ```bash
-git clone https://github.com/kingsotn-twelve/claude-agents
-cd claude-agents
+git clone https://github.com/kingsotn-twelve/agent-top
+cd agent-top
 ./install.sh
 ```
 
-`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `claude-agents` to `~/.local/bin/`. It also prints the exact hook config to paste into `~/.claude/settings.json`.
+`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `agent-top` to `~/.local/bin/`. It also prints the exact hook config to paste into `~/.claude/settings.json`.
 
 ### Hook config
 
@@ -34,7 +34,7 @@ Add this block to `~/.claude/settings.json`:
 ### Run the dashboard
 
 ```bash
-claude-agents
+agent-top
 ```
 
 Open in a split pane alongside your Claude Code session. Press `q` to quit.
@@ -42,7 +42,7 @@ Open in a split pane alongside your Claude Code session. Press `q` to quit.
 ## Uninstall
 
 ```bash
-rm ~/.local/bin/claude-agents
+rm ~/.local/bin/agent-top
 rm -rf ~/.claude/ccnotify/
 ```
 
@@ -56,7 +56,7 @@ Then remove the hooks block from `~/.claude/settings.json`.
    ├ ⠹  45s [rodeo]   Explore a3f82bc
    └ ⠹  12s [rodeo]   Plan    b9d1e34
  ◎     14s a3f82b fix auth bug
-   └ ⠹   8s [tl-api]  Bash    c7a2f90
+   └ ⠹   8s [myapp]   Bash    c7a2f90
  ○   5m02s 9c1d3a (waiting)
    └ Read→handler.go  Grep→"auth"
 ```
@@ -92,7 +92,7 @@ Agents appear nested under a test session with live timers. As each finishes it 
 ## How it works
 
 - **ccnotify.py** — Claude Code hook handler. Logs session, agent, and tool lifecycle events to SQLite. Fires macOS desktop notifications with sounds on task complete, waiting for input, and agent done.
-- **claude-agents** — curses TUI that polls the database every second and renders a live tree-view dashboard.
+- **agent-top** — curses TUI that polls the database every second and renders a live tree-view dashboard.
 
 Sessions are tracked via `UserPromptSubmit` (start) and `Stop` (end). Agents are tracked via `SubagentStart` / `SubagentStop`. Tool usage is tracked via `PreToolUse`.
 
@@ -102,7 +102,7 @@ A session is considered active if it has had tool activity in the last 10 minute
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `CLAUDE_AGENTS_DB` | `~/.claude/ccnotify/ccnotify.db` | Path to the SQLite database |
+| `AGENT_TOP_DB` | `~/.claude/ccnotify/ccnotify.db` | Path to the SQLite database |
 
 ## License
 

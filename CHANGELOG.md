@@ -114,7 +114,7 @@ On narrow terminals (< 100 cols), selecting a teammate or agent now shows the DE
 
 ### Self-update restored
 
-`claude-agents --update` is back. Fetches the latest version from GitHub and replaces the binary in-place.
+`agent-top --update` is back. Fetches the latest version from GitHub and replaces the binary in-place.
 
 ---
 
@@ -194,11 +194,11 @@ When `Stop` does fire, it now clears all un-stopped rows for the session — not
 
 ### Install script
 
-A new `install.sh` puts everything in the right place so `claude-agents` works from any directory — no more `./claude-agents` from the repo. It copies `ccnotify.py` to `~/.claude/ccnotify/` and the binary to `~/.local/bin/`, then prints the exact hook config to paste into `~/.claude/settings.json`.
+A new `install.sh` puts everything in the right place so `agent-top` works from any directory — no more `./agent-top` from the repo. It copies `ccnotify.py` to `~/.claude/ccnotify/` and the binary to `~/.local/bin/`, then prints the exact hook config to paste into `~/.claude/settings.json`.
 
 ```bash
-git clone https://github.com/kingsotn-twelve/claude-agents
-cd claude-agents
+git clone https://github.com/kingsotn-twelve/agent-top
+cd agent-top
 ./install.sh
 ```
 
@@ -211,9 +211,9 @@ cd claude-agents
 ./test-agents.sh 3 2 8    # 3 agents, 2–8s
 ```
 
-### `CLAUDE_AGENTS_DB` env var
+### `AGENT_TOP_DB` env var
 
-Both `claude-agents` and `test-agents.sh` now respect a `CLAUDE_AGENTS_DB` environment variable for pointing at a non-default database location, useful if your `ccnotify.py` is installed somewhere other than `~/.claude/ccnotify/`.
+Both `agent-top` and `test-agents.sh` now respect a `AGENT_TOP_DB` environment variable for pointing at a non-default database location, useful if your `ccnotify.py` is installed somewhere other than `~/.claude/ccnotify/`.
 
 ---
 
@@ -255,7 +255,7 @@ Removed green/yellow/red color coding on session durations. All durations now re
 
 ### Self-update
 ```
-claude-agents --update
+agent-top --update
 ```
 Fetches the latest version from GitHub and replaces the binary in-place. Prints `already up to date` if you're current, or `updated v0.1.1 → v0.1.2` on success.
 
@@ -281,10 +281,10 @@ Press `Enter` on a selected agent to open its transcript in a new iTerm2 tab wit
 
 ### `--version` and `--help`
 ```
-claude-agents --version   # claude-agents v0.1.0
-claude-agents --help      # usage + options
+agent-top --version   # agent-top v0.1.0
+agent-top --help      # usage + options
 ```
 
 ---
 
-*See the full diff on [GitHub](https://github.com/kingsotn-twelve/claude-agents/releases/tag/v0.1.0).*
+*See the full diff on [GitHub](https://github.com/kingsotn-twelve/agent-top/releases/tag/v0.1.0).*
