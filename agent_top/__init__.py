@@ -862,14 +862,14 @@ def _render_tool_expansion(stdscr, ev, pr, col, rw, max_row, is_error=False):
     draw(pr, f"  {separator}", color)
     pr += 1
 
-    # Input section
+    # Input section — pretty-printed JSON
     raw_input = ev.get("_raw_input")
     if raw_input:
         try:
             ti = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
-            for k, v in list(ti.items())[:6]:
-                vs = str(v).replace("\n", " ")[:max_width - len(k) - 4]
-                draw(pr, f"  {k}: {vs}", color)
+            pretty = json.dumps(ti, indent=2, ensure_ascii=False)
+            for line in pretty.split("\n")[:12]:
+                draw(pr, f"  {line[:max_width]}", color)
                 pr += 1
         except Exception:
             draw(pr, f"  {str(raw_input)[:max_width]}", color)
@@ -1061,20 +1061,6 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
             icon = "\u2717"  # cross mark
             color = RED
 
-        # Duration string with color
-        dur_ms = ev.get("_duration_ms")
-        dur_color = DIM
-        dur_str = ""
-        if dur_ms is not None and kind == "tool":
-            if dur_ms < 1000:
-                dur_str = f"{dur_ms}ms"
-                dur_color = GREEN
-            elif dur_ms < 5000:
-                dur_str = f"{dur_ms / 1000:.1f}s"
-                dur_color = YELLOW
-            else:
-                dur_str = f"{dur_ms / 1000:.1f}s"
-                dur_color = RED
         ts = fmt_time(ev.get("ts", ""))
         # Indent tools/agents under their prompt
         indent = 0 if kind == "prompt" else 2
@@ -1117,12 +1103,6 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
             else:
                 safe_add(stdscr, pr, col_start, ts, rw, DIM)
                 safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color)
-            # Draw duration right-aligned
-            if dur_str:
-                dur_x = x + w - len(dur_str) - 3
-                if dur_x > icon_col + len(text) + 2:
-                    dur_attr = dur_color | (curses.A_REVERSE if is_cursor else 0)
-                    safe_add(stdscr, pr, dur_x, dur_str, rw, dur_attr)
             pr += 1
             # Render expansion if this tool is expanded
             if kind == "tool" and state.get("_expanded_tool") == idx:
@@ -1462,13 +1442,9 @@ def _draw_detail(stdscr, pr, col, max_row, max_col, sel_agent, cache, scroll=0):
                 if pr >= max_row_virtual:
                     break
                 ts = fmt_time(ev.get("created_at"))
-                dur_ms = ev.get("duration_ms")
-                dur_str = f" {dur_ms}ms" if dur_ms else ""
                 tool_str = friendly_tool(ev["tool_name"], ev.get("tool_label", ""))
                 P(pr, col, ts, DIM)
                 P(pr, col + 9, tool_str[:pw - 20], YELLOW)
-                if dur_str:
-                    P(pr, col + 9 + min(len(tool_str), pw - 20) + 1, dur_str, DIM)
                 pr += 1
                 # Show tool_input summary
                 raw_input = ev.get("tool_input")
@@ -2476,6 +2452,12 @@ def main(stdscr, game_of_life=False):
         draw(stdscr, frame, state, cache)
         frame += 1
         ch = stdscr.getch()
+        # Always show debug info in footer
+        tl_dbg = state.get("_tree_timeline", [])
+        tc_dbg = state.get("tree_cursor", 0)
+        kind_dbg = tl_dbg[tc_dbg].get("kind", "?") if 0 <= tc_dbg < len(tl_dbg) else "none"
+        state["status_msg"] = f"[DEBUG] ch={ch} focus={state.get('focus')} tc={tc_dbg} kind={kind_dbg} exp={state.get('_expanded_tool', -1)} tl_len={len(tl_dbg)}"
+        state["status_until"] = time.time() + 60
         if ch in (ord("q"), ord("Q")):
             break
         elif ch == 9:  # Tab — cycle viz mode forward, auto-focus right panel
@@ -2565,34 +2547,30 @@ def main(stdscr, game_of_life=False):
                 state["stats_range"] = max(old - 1, 0)
                 if state["stats_range"] != old:
                     refresh_data(cache, state["stats_range"])
-        elif ch == 32:  # Space — toggle collapse on current prompt
-            tl = state.get("_tree_timeline", [])
-            tc = state.get("tree_cursor", 0)
-            if 0 <= tc < len(tl) and tl[tc].get("kind") == "prompt":
-                pk = tl[tc].get("_prompt_key", "")
-                collapsed = state.setdefault("_collapsed_prompts", set())
-                if pk in collapsed:
-                    collapsed.discard(pk)
-                else:
-                    collapsed.add(pk)
-                state["_expanded_tool"] = -1
-        elif ch in (10, 13, curses.KEY_ENTER):
-            if state["focus"] == "left" and state["selected"] >= 0:
-                # Enter focuses detail panel
+        elif ch in (32, 10, 13, curses.KEY_ENTER):  # Space or Enter
+            if ch in (10, 13, curses.KEY_ENTER) and state["focus"] == "left" and state["selected"] >= 0:
+                # Enter from left focuses right panel
                 state["focus"] = "right"
                 state["detail_scroll"] = 0; state["tree_cursor"] = 0
                 state["_expanded_tool"] = -1
-            elif state["focus"] == "right":
+            elif state.get("focus") == "right":
                 tl = state.get("_tree_timeline", [])
                 tc = state.get("tree_cursor", 0)
                 if 0 <= tc < len(tl):
                     ev = tl[tc]
-                    if ev.get("kind") == "tool":
-                        # Toggle expand/collapse
-                        if state.get("_expanded_tool") == tc:
-                            state["_expanded_tool"] = -1  # collapse
+                    if ev.get("kind") == "prompt":
+                        pk = ev.get("_prompt_key", "")
+                        collapsed = state.setdefault("_collapsed_prompts", set())
+                        if pk in collapsed:
+                            collapsed.discard(pk)
                         else:
-                            state["_expanded_tool"] = tc  # expand
+                            collapsed.add(pk)
+                        state["_expanded_tool"] = -1
+                    elif ev.get("kind") == "tool":
+                        if state.get("_expanded_tool") == tc:
+                            state["_expanded_tool"] = -1
+                        else:
+                            state["_expanded_tool"] = tc
 
 
 def self_update():
