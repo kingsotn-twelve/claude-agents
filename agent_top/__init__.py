@@ -84,13 +84,13 @@ def friendly_tool(name: str, label: str = "") -> str:
         return f"{base}: {short_label}"
     return base
 # Selection highlight variants (white-on-dark-gray)
-SEL = SEL_DIM = SEL_CYAN = SEL_YELLOW = SEL_GREEN = SEL_MAGENTA = 0
+SEL = SEL_DIM = SEL_CYAN = SEL_YELLOW = SEL_GREEN = SEL_MAGENTA = SEL_RED = 0
 BG_SEL = 236  # dark gray background
 
 
 def init_colors():
     global GREEN, CYAN, YELLOW, DIM, MAGENTA, WHITE, RED
-    global SEL, SEL_DIM, SEL_CYAN, SEL_YELLOW, SEL_GREEN, SEL_MAGENTA, BG_SEL
+    global SEL, SEL_DIM, SEL_CYAN, SEL_YELLOW, SEL_GREEN, SEL_MAGENTA, SEL_RED, BG_SEL
     curses.start_color()
     curses.use_default_colors()
     # Normal colors (pair 1-7)
@@ -112,12 +112,14 @@ def init_colors():
         curses.init_pair(14, curses.COLOR_YELLOW, BG_SEL)
         curses.init_pair(15, curses.COLOR_GREEN, BG_SEL)
         curses.init_pair(16, curses.COLOR_MAGENTA, BG_SEL)
+        curses.init_pair(17, curses.COLOR_RED, BG_SEL)
         SEL = curses.color_pair(11) | curses.A_BOLD
         SEL_DIM = curses.color_pair(12)
         SEL_CYAN = curses.color_pair(13) | curses.A_BOLD
         SEL_YELLOW = curses.color_pair(14) | curses.A_BOLD
         SEL_GREEN = curses.color_pair(15) | curses.A_BOLD
         SEL_MAGENTA = curses.color_pair(16) | curses.A_BOLD
+        SEL_RED = curses.color_pair(17) | curses.A_BOLD
     except curses.error:
         # Fallback if terminal doesn't support 256 colors
         SEL = curses.A_REVERSE | curses.A_BOLD
@@ -126,6 +128,7 @@ def init_colors():
         SEL_YELLOW = curses.A_REVERSE | curses.A_BOLD
         SEL_GREEN = curses.A_REVERSE | curses.A_BOLD
         SEL_MAGENTA = curses.A_REVERSE | curses.A_BOLD
+        SEL_RED = curses.A_REVERSE | curses.A_BOLD
 
 
 # ── DATA QUERIES ─────────────────────────────────────────────
@@ -149,6 +152,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
         "session_tools": {},  # session_id -> [{tool_name, tool_label, created_at}] — extended list for detail view
         "top_agents": [],
         "top_tools": [],
+        "error_stats": [],
         "activity": {},
     }
     if not os.path.exists(db_path):
@@ -359,6 +363,23 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
             ]
         except sqlite3.OperationalError:
             data["top_tools"] = []
+
+        # Error stats: tools with is_error=1 grouped by tool+cwd
+        try:
+            error_time_filter = f"AND te.created_at > datetime('now', '{sql_interval}')" if sql_interval else ""
+            data["error_stats"] = [
+                dict(r) for r in conn.execute(
+                    f"""SELECT te.tool_name, p.cwd, COUNT(*) as cnt
+                        FROM tool_event te
+                        LEFT JOIN prompt p ON te.session_id = p.session_id
+                        WHERE te.is_error = 1 {error_time_filter}
+                        GROUP BY te.tool_name, p.cwd
+                        ORDER BY cnt DESC
+                        LIMIT 8"""
+                )
+            ]
+        except sqlite3.OperationalError:
+            data["error_stats"] = []
 
         conn.close()
     except sqlite3.OperationalError:
@@ -1720,6 +1741,7 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
 
     top_agents = cache["data"].get("top_agents", [])
     top_tools = cache["data"].get("top_tools", [])
+    error_stats = cache["data"].get("error_stats", [])
 
     # Helpers: clip to panel widths (preserve box borders)
     def L(r, c, text, attr=0):
@@ -2253,6 +2275,39 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
                     L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", SEL)
                 else:
                     L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", DIM)
+                sr += 1
+
+        # Error rankings
+        if error_stats and sr < max_sr - 1:
+            sr += 1  # blank line before section
+            L(sr, 2, f"ERRORS  {range_label}", RED)
+            sr += 1
+            max_e = error_stats[0]["cnt"]
+            etag_w = max((len(dir_tag(e.get("cwd", ""))) for e in error_stats), default=0)
+            ename_w = max((len(e["tool_name"] or "?") for e in error_stats), default=0)
+            for entry in error_stats:
+                if sr >= max_sr:
+                    break
+                tag = dir_tag(entry.get("cwd", ""))
+                tname = entry["tool_name"] or "?"
+                cnt = entry["cnt"]
+                bar = _bar(cnt, max_e)
+                col1 = tag.ljust(etag_w)
+                col2 = tname.ljust(ename_w)
+                stat_item = {"agent_id": tname, "agent_type": tname, "session_id": "",
+                             "started_at": "", "cwd": entry.get("cwd", ""), "is_stat": True,
+                             "stat_kind": "error", "stat_count": cnt, "stat_label": f"{tag} {tname}"}
+                vidx = len(visible_items)
+                visible_items.append(stat_item)
+                is_sel = (vidx == state.get("selected", -1))
+                if is_sel:
+                    try:
+                        stdscr.addnstr(sr, 1, " " * (lw - 2), lw - 2, SEL_DIM)
+                    except curses.error:
+                        pass
+                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", SEL_RED)
+                else:
+                    L(sr, 2, f"{col1}  {col2}  {bar} {cnt}", RED)
                 sr += 1
 
         if len(visible_items) > stats_first_idx:
