@@ -816,11 +816,17 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         groups.append((current_prompt, current_children))
     # Reverse so newest prompt is first; children stay in execution order
     groups.reverse()
+    # Apply tree filter: 0=full, 1=prompts only, 2=prompts+agents
+    tf = state.get("tree_filter", 0)
     timeline = []
     for prompt_ev, children in groups:
         if prompt_ev:
             timeline.append(prompt_ev)
-        timeline.extend(children)
+        if tf == 0:  # full
+            timeline.extend(children)
+        elif tf == 2:  # prompts+agents
+            timeline.extend(c for c in children if c.get("kind") == "agent")
+        # tf == 1: prompts only, skip children
 
     # Store timeline so Enter can access the highlighted item
     state["_tree_len"] = len(timeline)
@@ -2067,8 +2073,12 @@ def draw(stdscr, frame: int, state: dict, cache: dict):
         focused = state.get("focus") == "right"
         viz_mode = VIZ_MODES[state.get("viz_mode", 0) % len(VIZ_MODES)] if state.get("viz_mode", 0) < len(VIZ_MODES) else "life"
 
-        # Build title with tab selector
+        # Build title with tab selector + filter mode
+        TREE_FILTER_LABELS = ["full", "prompts", "prompts+agents"]
         tabs = "  ".join(f"[{VIZ_LABELS[m]}]" if m == viz_mode else VIZ_LABELS[m] for m in VIZ_MODES)
+        if viz_mode == "tree":
+            tf_label = TREE_FILTER_LABELS[state.get("tree_filter", 0)]
+            tabs += f"  ({tf_label})"
         if state.get("game_of_life"):
             tabs += "  LIFE"
         title_prefix = "\u25b6 " if focused else ""
@@ -2197,7 +2207,7 @@ def main(stdscr, game_of_life=False):
 
     state: dict = {"selected": 0, "visible_items": [], "status_msg": "", "status_until": 0.0,
                    "stats_range": 2, "game_of_life": game_of_life, "focus": "left", "detail_scroll": 0,
-                   "viz_mode": 0}
+                   "viz_mode": 0, "tree_filter": 0}
     cache: dict = {}
     refresh_data(cache, state["stats_range"])
     frame = 0
@@ -2291,6 +2301,12 @@ def main(stdscr, game_of_life=False):
                 state["stats_range"] = max(old - 1, 0)
                 if state["stats_range"] != old:
                     refresh_data(cache, state["stats_range"])
+        elif ch == 32:  # Space — toggle tree filter
+            TREE_FILTERS = ["full", "prompts", "prompts+agents"]
+            tf = (state.get("tree_filter", 0) + 1) % len(TREE_FILTERS)
+            state["tree_filter"] = tf
+            state["tree_cursor"] = 0
+            state["detail_scroll"] = 0
         elif ch in (10, 13, curses.KEY_ENTER):
             if state["focus"] == "left" and state["selected"] >= 0:
                 # Enter focuses detail panel
