@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -186,6 +186,19 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
                LIMIT 10"""
         ):
             data["active_sessions"].append(dict(row))
+
+        # Tombstone zombie sessions: stoped_at never fired, no recent activity.
+        # Marks them stopped so they don't accumulate in the DB forever.
+        conn.execute(
+            """UPDATE prompt SET stoped_at = datetime('now')
+               WHERE stoped_at IS NULL
+                 AND created_at < datetime('now', '-2 hours')
+                 AND (lastWaitUserAt IS NULL OR lastWaitUserAt < datetime('now', '-2 hours'))
+                 AND session_id NOT IN (
+                     SELECT DISTINCT session_id FROM tool_event
+                     WHERE created_at > datetime('now', '-30 minutes')
+                 )"""
+        )
 
         # Reap orphaned agents: parent session has no open prompt rows (stoped_at IS NOT NULL
         # on all its prompts), meaning Claude fired the Stop hook and the session is truly gone.
