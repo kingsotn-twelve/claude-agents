@@ -2179,6 +2179,7 @@ def self_update():
 
 
 def setup():
+    from pathlib import Path
     import shutil
     import importlib.resources
     import stat
