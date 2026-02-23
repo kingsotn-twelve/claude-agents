@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.10.0"
+VERSION = "0.9.2"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 

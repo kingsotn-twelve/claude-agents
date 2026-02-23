@@ -8,21 +8,17 @@ Live terminal dashboard for monitoring Claude Code sessions and agents.
 
 ## Setup
 
-**With uv (recommended):**
-
 ```bash
 uv tool install git+https://github.com/kingsotn-twelve/agent-top
 ```
 
-**Manual:**
+Then copy `ccnotify.py` and add hooks — run `install.sh` from the repo for that step:
 
 ```bash
-git clone https://github.com/kingsotn-twelve/agent-top
-cd agent-top
-./install.sh
+git clone https://github.com/kingsotn-twelve/agent-top && cd agent-top && ./install.sh
 ```
 
-`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `agent-top` to `~/.local/bin/`. It then prints the exact hook config to merge into `~/.claude/settings.json`.
+`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and prints the exact hook config to merge into `~/.claude/settings.json`.
 
 ### Hook config
 
