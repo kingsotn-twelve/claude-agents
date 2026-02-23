@@ -2363,7 +2363,8 @@ def setup(no_ccnotify=False):
     "Stop":             [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} Stop"}}]}}],
     "Notification":     [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} Notification"}}]}}],
     "PreToolUse":       [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} PreToolUse"}}]}}],
-    "PostToolUse":      [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} PostToolUse"}}]}}]
+    "PostToolUse":      [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} PostToolUse"}}]}}],
+    "PostToolUseFailure": [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} PostToolUseFailure"}}]}}]
   }}
 }}''')
     print()
