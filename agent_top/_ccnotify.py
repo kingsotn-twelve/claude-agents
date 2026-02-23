@@ -455,10 +455,10 @@ class ClaudePromptTracker:
 
             if row:
                 record_id = row[0]
-                # Clear ALL un-stopped rows for this session, not just the latest.
-                # Previous Stop failures can leave multiple stale rows; clean them all.
+                # Mark session as waiting — NOT stopped. Session stays visible.
+                # Only SessionEnd sets stoped_at (terminal actually closed).
                 conn.execute(
-                    "UPDATE prompt SET stoped_at = CURRENT_TIMESTAMP WHERE session_id = ? AND stoped_at IS NULL",
+                    "UPDATE prompt SET lastWaitUserAt = CURRENT_TIMESTAMP WHERE session_id = ? AND stoped_at IS NULL",
                     (session_id,),
                 )
                 conn.commit()
@@ -471,7 +471,7 @@ class ClaudePromptTracker:
                 seq = "?"
                 duration = ""
 
-        # Clean up any running agents for this session — they're orphans now
+        # Clean up any running agents for this session — they're done for this turn
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """UPDATE agent SET stopped_at = CURRENT_TIMESTAMP
