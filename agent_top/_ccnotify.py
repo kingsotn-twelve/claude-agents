@@ -370,6 +370,43 @@ class ClaudePromptTracker:
             conn.commit()
         logging.info(f"Prompt recorded session={session_id}")
 
+    def handle_session_start(self, data: dict) -> None:
+        """Record session immediately on open — before any prompt is submitted."""
+        session_id = data.get("session_id")
+        cwd = data.get("cwd", "")
+        if not session_id:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            # Only insert if no open row already exists for this session
+            existing = conn.execute(
+                "SELECT id FROM prompt WHERE session_id = ? AND stoped_at IS NULL LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO prompt (session_id, cwd, pid) VALUES (?, ?, ?)",
+                    (session_id, cwd, os.getppid()),
+                )
+                conn.commit()
+        logging.info(f"Session started session={session_id}")
+
+    def handle_session_end(self, data: dict) -> None:
+        """Mark session stopped when terminal closes."""
+        session_id = data.get("session_id")
+        if not session_id:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE prompt SET stoped_at = CURRENT_TIMESTAMP WHERE session_id = ? AND stoped_at IS NULL",
+                (session_id,),
+            )
+            conn.execute(
+                "UPDATE agent SET stopped_at = CURRENT_TIMESTAMP WHERE session_id = ? AND stopped_at IS NULL",
+                (session_id,),
+            )
+            conn.commit()
+        logging.info(f"Session ended session={session_id}")
+
     def handle_stop(self, data: dict, is_subagent: bool = False) -> None:
         session_id = data.get("session_id")
         cwd = data.get("cwd", "")
@@ -498,8 +535,8 @@ def main():
         return
 
     event = sys.argv[1]
-    valid = ["UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "Notification", "PreToolUse",
-             "TeammateIdle", "TaskCompleted"]
+    valid = ["SessionStart", "SessionEnd", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop",
+             "Notification", "PreToolUse", "TeammateIdle", "TaskCompleted"]
     if event not in valid:
         logging.error(f"Invalid event: {event}")
         sys.exit(1)
@@ -516,7 +553,11 @@ def main():
 
     tracker = ClaudePromptTracker()
 
-    if event == "UserPromptSubmit":
+    if event == "SessionStart":
+        tracker.handle_session_start(data)
+    elif event == "SessionEnd":
+        tracker.handle_session_end(data)
+    elif event == "UserPromptSubmit":
         tracker.handle_user_prompt_submit(data)
     elif event == "Stop":
         tracker.handle_stop(data, is_subagent=False)

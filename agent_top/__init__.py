@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -2216,6 +2216,8 @@ def setup(no_ccnotify=False):
         print(f'''\
 {{
   "hooks": {{
+    "SessionStart":     [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} SessionStart"}}]}}],
+    "SessionEnd":       [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} SessionEnd"}}]}}],
     "SubagentStart":    [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} SubagentStart"}}]}}],
     "SubagentStop":     [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} SubagentStop"}}]}}],
     "UserPromptSubmit": [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} UserPromptSubmit"}}]}}],

@@ -30,6 +30,8 @@ Paste the output of `--setup` into `~/.claude/settings.json`, merging into the e
 ```json
 {
   "hooks": {
+    "SessionStart":     [ ... ],
+    "SessionEnd":       [ ... ],
     "SubagentStart":    [ ... ],
     "SubagentStop":     [ ... ],
     "UserPromptSubmit": [ ... ],
