@@ -2168,12 +2168,18 @@ def main(stdscr, game_of_life=False):
             state["viz_mode"] = (state["viz_mode"] - 1) % n_modes
             state["detail_scroll"] = 0; state["tree_cursor"] = 0
             state["focus"] = "right"
-        elif ch == 27:  # Esc
-            if state["focus"] == "right":
-                state["focus"] = "left"
-                state["detail_scroll"] = 0; state["tree_cursor"] = 0
-            else:
-                state["selected"] = -1
+        elif ch == 27:  # Esc — peek ahead to discard escape sequences (arrow keys etc.)
+            stdscr.nodelay(True)
+            next_ch = stdscr.getch()
+            if next_ch == -1:
+                # Pure Esc press (no sequence following)
+                if state["focus"] == "right":
+                    state["focus"] = "left"
+                    state["detail_scroll"] = 0; state["tree_cursor"] = 0
+                else:
+                    state["selected"] = -1
+            # else: was an escape sequence — ignore (arrow keys handled by KEY_UP etc.)
+            stdscr.timeout(RENDER_MS)
         elif ch in (ord("j"), curses.KEY_DOWN):
             if state["focus"] == "right":
                 tc = state.get("tree_cursor", 0)
