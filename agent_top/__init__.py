@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -173,7 +173,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
                    FROM prompt
                    WHERE stoped_at IS NULL
                      AND (
-                       lastWaitUserAt IS NOT NULL
+                       lastWaitUserAt > datetime('now', '-2 hours')
                        OR created_at > datetime('now', '-5 minutes')
                        OR session_id IN (
                          SELECT DISTINCT session_id FROM tool_event
