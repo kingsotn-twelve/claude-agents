@@ -4,6 +4,8 @@ Live terminal dashboard for monitoring Claude Code sessions and agents.
 
 <img width="2168" height="1397" alt="image" src="https://github.com/user-attachments/assets/12864435-fb1d-4d9d-b5ef-19154db86ebe" />
 
+**Requires:** macOS, Python 3, [iTerm2](https://iterm2.com) (for transcript tab opening)
+
 ## Setup
 
 ```bash
@@ -12,21 +14,21 @@ cd agent-top
 ./install.sh
 ```
 
-`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `agent-top` to `~/.local/bin/`. It also prints the exact hook config to paste into `~/.claude/settings.json`.
+`install.sh` copies `ccnotify.py` to `~/.claude/ccnotify/` and `agent-top` to `~/.local/bin/`. It then prints the exact hook config to merge into `~/.claude/settings.json`.
 
 ### Hook config
 
-Add this block to `~/.claude/settings.json`:
+`install.sh` prints the hooks block to add to `~/.claude/settings.json`. Merge it into the existing `"hooks"` key (don't replace the whole file):
 
 ```json
 {
   "hooks": {
-    "SubagentStart":    [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py SubagentStart"}]}],
-    "SubagentStop":     [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py SubagentStop"}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py UserPromptSubmit"}]}],
-    "Stop":             [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py Stop"}]}],
-    "Notification":     [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py Notification"}]}],
-    "PreToolUse":       [{"matcher": "", "hooks": [{"type": "command", "command": "~/.claude/ccnotify/ccnotify.py PreToolUse"}]}]
+    "SubagentStart":    [ ... ],
+    "SubagentStop":     [ ... ],
+    "UserPromptSubmit": [ ... ],
+    "Stop":             [ ... ],
+    "Notification":     [ ... ],
+    "PreToolUse":       [ ... ]
   }
 }
 ```
