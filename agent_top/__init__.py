@@ -835,15 +835,18 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         if kind == "agent" and not ev.get("running"):
             color = DIM
         ts = fmt_time(ev.get("ts", ""))
-        text = ev["text"][:w - 14]
+        # Indent tools/agents under their prompt
+        indent = 0 if kind == "prompt" else 2
+        text = ev["text"][:w - 14 - indent]
+        col_start = x + 2 + indent
+        icon_col = x + 11 + indent
         if is_cursor:
-            # Highlight row
             safe_add(stdscr, pr, x + 1, " " * (w - 2), rw, curses.A_REVERSE)
-            safe_add(stdscr, pr, x + 2, ts, rw, DIM | curses.A_REVERSE)
-            safe_add(stdscr, pr, x + 11, f"{icon} {text}", rw, color | curses.A_REVERSE)
+            safe_add(stdscr, pr, col_start, ts, rw, DIM | curses.A_REVERSE)
+            safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color | curses.A_REVERSE)
         else:
-            safe_add(stdscr, pr, x + 2, ts, rw, DIM)
-            safe_add(stdscr, pr, x + 11, f"{icon} {text}", rw, color)
+            safe_add(stdscr, pr, col_start, ts, rw, DIM)
+            safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color)
         pr += 1
 
     if not timeline:
