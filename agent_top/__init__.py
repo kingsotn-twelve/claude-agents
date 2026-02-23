@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -2178,27 +2178,30 @@ def self_update():
         sys.exit(1)
 
 
-def setup():
+def setup(no_ccnotify=False):
     from pathlib import Path
     import shutil
     import importlib.resources
     import stat
 
-    ccnotify_dir = Path.home() / ".claude" / "ccnotify"
-    ccnotify_dir.mkdir(parents=True, exist_ok=True)
-    dest = ccnotify_dir / "ccnotify.py"
+    dest = Path.home() / ".claude" / "ccnotify" / "ccnotify.py"
 
-    if dest.exists():
+    if no_ccnotify:
+        print("  Skipping ccnotify installation.")
+    elif dest.exists():
         print(f"  ccnotify.py already exists at {dest} — skipping (delete it first to reinstall)")
     else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
         with importlib.resources.path("agent_top", "_ccnotify.py") as src:
             shutil.copy(src, dest)
         dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         print(f"  ccnotify.py  →  {dest}")
-    print()
-    print("Add these hooks to ~/.claude/settings.json:")
-    print()
-    print(f'''\
+
+    if not no_ccnotify:
+        print()
+        print("Add these hooks to ~/.claude/settings.json:")
+        print()
+        print(f'''\
 {{
   "hooks": {{
     "SubagentStart":    [{{"matcher": "", "hooks": [{{"type": "command", "command": "{dest} SubagentStart"}}]}}],
@@ -2228,6 +2231,9 @@ def cli():
         "--setup", action="store_true", help="install ccnotify hooks and print settings.json config"
     )
     parser.add_argument(
+        "--no-ccnotify", action="store_true", help="use --setup without installing ccnotify"
+    )
+    parser.add_argument(
         "--update", action="store_true", help="self-update from GitHub"
     )
     parser.add_argument(
@@ -2236,7 +2242,7 @@ def cli():
     args = parser.parse_args()
 
     if args.setup:
-        setup()
+        setup(no_ccnotify=getattr(args, "no_ccnotify", False))
         sys.exit(0)
 
     if args.update:
