@@ -855,17 +855,44 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         ts = fmt_time(ev.get("ts", ""))
         # Indent tools/agents under their prompt
         indent = 0 if kind == "prompt" else 2
-        text = ev["text"][:w - 14 - indent]
         col_start = x + 2 + indent
         icon_col = x + 11 + indent
-        if is_cursor:
-            safe_add(stdscr, pr, x + 1, " " * (w - 2), rw, curses.A_REVERSE)
-            safe_add(stdscr, pr, col_start, ts, rw, DIM | curses.A_REVERSE)
-            safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color | curses.A_REVERSE)
+        text_w = w - 13 - indent  # available width for text after icon
+        text = ev["text"]
+
+        if kind == "prompt" and len(text) > text_w:
+            # Wrap prompt across multiple lines
+            lines = []
+            while text and len(lines) < 4:  # max 4 lines
+                lines.append(text[:text_w])
+                text = text[text_w:]
+            for li, line in enumerate(lines):
+                if pr >= y + h:
+                    break
+                if li == 0:
+                    if is_cursor:
+                        safe_add(stdscr, pr, x + 1, " " * (w - 2), rw, curses.A_REVERSE)
+                        safe_add(stdscr, pr, col_start, ts, rw, DIM | curses.A_REVERSE)
+                        safe_add(stdscr, pr, icon_col, f"{icon} {line}", rw, color | curses.A_REVERSE)
+                    else:
+                        safe_add(stdscr, pr, col_start, ts, rw, DIM)
+                        safe_add(stdscr, pr, icon_col, f"{icon} {line}", rw, color)
+                else:
+                    attr = (color | curses.A_REVERSE) if is_cursor else color
+                    if is_cursor:
+                        safe_add(stdscr, pr, x + 1, " " * (w - 2), rw, curses.A_REVERSE)
+                    safe_add(stdscr, pr, icon_col + 2, line, rw, attr)
+                pr += 1
         else:
-            safe_add(stdscr, pr, col_start, ts, rw, DIM)
-            safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color)
-        pr += 1
+            text = text[:text_w]
+            if is_cursor:
+                safe_add(stdscr, pr, x + 1, " " * (w - 2), rw, curses.A_REVERSE)
+                safe_add(stdscr, pr, col_start, ts, rw, DIM | curses.A_REVERSE)
+                safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color | curses.A_REVERSE)
+            else:
+                safe_add(stdscr, pr, col_start, ts, rw, DIM)
+                safe_add(stdscr, pr, icon_col, f"{icon} {text}", rw, color)
+            pr += 1
 
     if not timeline:
         safe_add(stdscr, y, x + 2, "(no activity)", rw, DIM)
