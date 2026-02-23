@@ -280,9 +280,8 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
                 for row in conn.execute(
                     """SELECT tool_name, tool_label, created_at, tool_input, tool_response, duration_ms FROM tool_event
                        WHERE session_id = ?
-                         AND created_at > datetime('now', '-30 minutes')
                        ORDER BY created_at DESC
-                       LIMIT 20""",
+                       LIMIT 200""",
                     (sid,),
                 ):
                     rows.append(dict(row))
