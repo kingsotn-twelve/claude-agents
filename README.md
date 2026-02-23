@@ -1,8 +1,8 @@
 # agent-top
 
 Live terminal dashboard for monitoring Claude Code sessions and agents.
+<img width="2056" height="1286" alt="image" src="https://github.com/user-attachments/assets/e41ddfdf-78c9-43da-90bc-4ecb51f8b7f8" />
 
-<img width="2168" height="1397" alt="image" src="https://github.com/user-attachments/assets/12864435-fb1d-4d9d-b5ef-19154db86ebe" />
 
 **Requires:** macOS, Python 3, [iTerm2](https://iterm2.com) (for transcript tab opening)
 
