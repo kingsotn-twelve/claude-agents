@@ -13,11 +13,19 @@ uv tool install git+https://github.com/kingsotn-twelve/agent-top
 agent-top --setup
 ```
 
-`--setup` copies `ccnotify.py` to `~/.claude/ccnotify/` and prints the hook config to merge into `~/.claude/settings.json`. It won't overwrite an existing `ccnotify.py`.
+`--setup` copies `ccnotify.py` to `~/.claude/ccnotify/` and prints the hook config. It won't overwrite an existing `ccnotify.py`.
+
+### Run the dashboard
+
+```bash
+agent-top
+```
+
+Open in a split pane alongside your Claude Code session. Press `q` to quit.
 
 ### Hook config
 
-`install.sh` prints the hooks block to add to `~/.claude/settings.json`. Merge it into the existing `"hooks"` key (don't replace the whole file):
+Paste the output of `--setup` into `~/.claude/settings.json`, merging into the existing `"hooks"` key (don't replace the whole file):
 
 ```json
 {
@@ -32,18 +40,10 @@ agent-top --setup
 }
 ```
 
-### Run the dashboard
-
-```bash
-agent-top
-```
-
-Open in a split pane alongside your Claude Code session. Press `q` to quit.
-
 ## Uninstall
 
 ```bash
-rm ~/.local/bin/agent-top
+uv tool uninstall agent-top
 rm -rf ~/.claude/ccnotify/
 ```
 
@@ -57,17 +57,6 @@ Then remove the hooks block from `~/.claude/settings.json`.
 | `k` / `↑` | Select previous agent |
 | `Enter` | Open selected agent's transcript in a new iTerm2 tab (`tail -f`) |
 | `q` | Quit |
-
-## Test it
-
-Verify the dashboard without a live Claude session:
-
-```bash
-./test-agents.sh          # 5 agents, 5–20s
-./test-agents.sh 3 2 8    # 3 agents, 2–8s
-```
-
-Agents appear nested under a test session with live timers. As each finishes it moves to HISTORY.
 
 ## How it works
 
