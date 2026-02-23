@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 
 PREVIEW_ROWS = 7  # lines reserved for inline preview (divider + header + content)
 
@@ -2149,33 +2149,12 @@ def main(stdscr, game_of_life=False):
 
 
 def self_update():
-    """Pull latest from GitHub and replace the running script."""
-    import urllib.request
-    raw_url = "https://raw.githubusercontent.com/kingsotn-twelve/agent-top/main/agent-top"
-    try:
-        with urllib.request.urlopen(raw_url, timeout=10) as resp:
-            new_src = resp.read().decode()
-    except Exception as e:
-        print(f"update failed: {e}")
-        sys.exit(1)
-    # Extract remote version
-    remote_ver = None
-    for line in new_src.splitlines()[:30]:
-        if line.startswith("VERSION"):
-            remote_ver = line.split('"')[1]
-            break
-    if remote_ver == VERSION:
-        print(f"already up to date (v{VERSION})")
-        return
-    # Overwrite self
-    me = os.path.realpath(sys.argv[0])
-    try:
-        with open(me, "w") as f:
-            f.write(new_src)
-        print(f"updated v{VERSION} → v{remote_ver}")
-    except Exception as e:
-        print(f"write failed: {e}")
-        sys.exit(1)
+    """Upgrade via uv."""
+    result = subprocess.run(
+        ["uv", "tool", "upgrade", "agent-top"],
+        capture_output=False,
+    )
+    sys.exit(result.returncode)
 
 
 def setup(no_ccnotify=False):
