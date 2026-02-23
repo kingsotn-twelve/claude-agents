@@ -799,20 +799,22 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         timeline.append({"ts": a.get("started_at", ""), "kind": "agent", "text": f"{a['agent_type']}  {adur}",
                          "running": running})
 
-    # Group by prompt: prompts newest-first, tools within each prompt oldest-first (execution order)
-    timeline.sort(key=lambda e: e.get("ts", ""))  # sort everything chronologically first
-    # Assign each non-prompt event to its preceding prompt
-    groups = []  # list of (prompt_event, [child_events])
+    # Group by prompt: tools AFTER a prompt are its children
+    timeline.sort(key=lambda e: e.get("ts", ""))  # sort chronologically
+    groups = []  # list of (prompt_event_or_None, [child_events])
+    current_prompt = None
     current_children = []
     for ev in timeline:
         if ev["kind"] == "prompt":
-            groups.append((ev, current_children))
+            if current_prompt is not None or current_children:
+                groups.append((current_prompt, current_children))
+            current_prompt = ev
             current_children = []
         else:
             current_children.append(ev)
-    if current_children:
-        groups.append((None, current_children))  # tools before any prompt
-    # Reverse groups so newest prompt is first; children stay in execution order
+    if current_prompt is not None or current_children:
+        groups.append((current_prompt, current_children))
+    # Reverse so newest prompt is first; children stay in execution order
     groups.reverse()
     timeline = []
     for prompt_ev, children in groups:
