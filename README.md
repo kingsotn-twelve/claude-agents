@@ -8,6 +8,14 @@ Live terminal dashboard for monitoring Claude Code sessions and agents.
 
 ## Setup
 
+**With uv (recommended):**
+
+```bash
+uv tool install git+https://github.com/kingsotn-twelve/agent-top
+```
+
+**Manual:**
+
 ```bash
 git clone https://github.com/kingsotn-twelve/agent-top
 cd agent-top

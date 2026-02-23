@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-top"
+version = "0.10.0"
+description = "Live terminal dashboard for Claude Code sessions and agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.scripts]
+agent-top = "agent_top:cli"

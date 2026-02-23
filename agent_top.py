@@ -2178,7 +2178,7 @@ def self_update():
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def cli():
     parser = argparse.ArgumentParser(
         prog="agent-top",
         description="Live terminal dashboard for Claude Code sessions & agents.\n"
@@ -2205,3 +2205,6 @@ if __name__ == "__main__":
         curses.wrapper(lambda stdscr: main(stdscr, game_of_life=args.game_of_life))
     except KeyboardInterrupt:
         pass
+
+if __name__ == "__main__":
+    cli()

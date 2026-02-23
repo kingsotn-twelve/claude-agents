@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.10.0 — Feb 22, 2026
+
+### uv installable
+
+Install directly from GitHub with a single command — no cloning required.
+
+```bash
+uv tool install git+https://github.com/kingsotn-twelve/agent-top
+```
+
+---
+
 ## v0.9.0 — Feb 21, 2026
 
 ### Simplify
