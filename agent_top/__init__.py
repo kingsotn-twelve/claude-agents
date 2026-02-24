@@ -15,7 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 VERSION = "1.2.0"
 
