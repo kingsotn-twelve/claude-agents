@@ -715,96 +715,11 @@ def life_render(grid, rows, cols, char_w, char_h):
 # ── VISUALIZATION MODES ──────────────────────────────────────
 
 
-def _build_gantt_segments(prompts, tools, agents, now_utc):
-    """Build compressed active-time segments for flame graph Gantt.
-
-    Each prompt defines a segment. Active time runs from prompt start to
-    last tool/agent activity in that window. Idle gaps between prompts
-    are compressed out.
-
-    Returns (segments, total_active_s).
-    """
-    sorted_prompts = sorted(prompts, key=lambda p: p.get("created_at", ""))
-    if not sorted_prompts:
-        return [], 0.0
-
-    segments = []
-    cumulative_offset = 0.0
-
-    for i, p in enumerate(sorted_prompts):
-        seg_start = parse_dt(p.get("created_at"))
-        if not seg_start:
-            continue
-
-        # Window end: next prompt start, or now
-        if i + 1 < len(sorted_prompts):
-            window_end = parse_dt(sorted_prompts[i + 1].get("created_at")) or now_utc
-        else:
-            window_end = now_utc
-
-        # Find last activity in this window
-        last_activity = seg_start
-
-        for t in tools:
-            t_start = parse_dt(t.get("created_at"))
-            if not t_start or t_start < seg_start or t_start >= window_end:
-                continue
-            t_end = t_start
-            dur_ms = t.get("duration_ms")
-            if dur_ms:
-                t_end = t_start + timedelta(milliseconds=dur_ms)
-            last_activity = max(last_activity, t_end)
-
-        for a in agents:
-            a_start = parse_dt(a.get("started_at"))
-            a_stop = parse_dt(a.get("stopped_at"))
-            if not a_start or a_start >= window_end or (a_stop and a_stop <= seg_start):
-                continue
-            effective_end = min(a_stop or now_utc, window_end)
-            last_activity = max(last_activity, effective_end)
-
-        # Skip segments with no real activity (no tools/agents fired)
-        if last_activity == seg_start:
-            continue
-
-        seg_end = min(last_activity, window_end)
-        duration_s = max(1.0, (seg_end - seg_start).total_seconds())
-
-        segments.append({
-            "prompt_text": short_prompt(p.get("prompt", ""), 20),
-            "start": seg_start,
-            "end": seg_start + timedelta(seconds=duration_s),
-            "duration_s": duration_s,
-            "offset_s": cumulative_offset,
-        })
-        cumulative_offset += duration_s
-
-    return segments, cumulative_offset
-
-
-def _time_to_col(dt_val, segments, total_active_s, bar_w):
-    """Map an absolute datetime to an x-column on the compressed timeline."""
-    if not segments or total_active_s <= 0:
-        return 0
-    for seg in segments:
-        if seg["start"] <= dt_val <= seg["end"]:
-            local_frac = (dt_val - seg["start"]).total_seconds() / max(0.001, seg["duration_s"])
-            global_frac = (seg["offset_s"] + local_frac * seg["duration_s"]) / total_active_s
-            return min(bar_w - 1, int(global_frac * bar_w))
-    # Falls in an idle gap — snap to nearest segment boundary
-    for seg in segments:
-        if dt_val < seg["start"]:
-            global_frac = seg["offset_s"] / total_active_s
-            return min(bar_w - 1, int(global_frac * bar_w))
-    return bar_w - 1
-
 def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
-    """Flame graph Gantt: compressed active-time horizontal bars for the entire session."""
+    """Gantt chart: one bar per agent, x-axis = active window of the session."""
     active_all = cache.get("active_all", [])
     r_agents = cache.get("r_agents", [])
     c_agents = cache.get("c_agents", [])
-    session_tools = cache.get("session_tools", {})
-    session_prompts = cache.get("session_prompts", {})
     rw = x + w - 1
 
     # Scope to selected session
@@ -818,131 +733,88 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
         safe_add(stdscr, y + 1, x + 2, "select a session", rw, DIM)
         return
 
-    # Gather data
-    prompts = session_prompts.get(target_sid, [])
-    tools = session_tools.get(target_sid, [])
-    all_agents = [a for a in (r_agents + c_agents) if a.get("session_id") == target_sid]
+    # Collect agents for this session
     now_utc = datetime.now(timezone.utc)
+    running_ids = {a["agent_id"] for a in r_agents}
+    all_agents = [a for a in (r_agents + c_agents) if a.get("session_id") == target_sid]
+    tracks = []
+    for a in sorted(all_agents, key=lambda a: a.get("started_at", "")):
+        a_start = parse_dt(a.get("started_at"))
+        if not a_start:
+            continue
+        a_end = parse_dt(a.get("stopped_at")) if a.get("stopped_at") else now_utc
+        tracks.append({
+            "label": (a.get("agent_type") or "agent"),
+            "start": a_start,
+            "end": a_end,
+            "running": a["agent_id"] in running_ids,
+        })
 
-    segments, total_active_s = _build_gantt_segments(prompts, tools, all_agents, now_utc)
-    if not segments:
-        safe_add(stdscr, y + 1, x + 2, "(no activity)", rw, DIM)
+    if not tracks:
+        safe_add(stdscr, y + 1, x + 2, "(no agents)", rw, DIM)
         return
+
+    # Active window: earliest start → latest end
+    window_start = min(t["start"] for t in tracks)
+    window_end = max(t["end"] for t in tracks)
+    span = max(1.0, (window_end - window_start).total_seconds())
+
+    # Active time: sum of agent durations
+    active_s = sum((t["end"] - t["start"]).total_seconds() for t in tracks)
 
     # Layout
     label_w = 16
-    bar_w = w - label_w - 12  # room for label + bar + duration
+    dur_w = 10
+    bar_w = w - label_w - dur_w - 4
     if bar_w < 8:
         return
     bar_x = x + label_w + 2
-
     pr = y
 
-    # Row 0: Header — active time (wall time)
-    active_str = fmt_dur_seconds(total_active_s)
-    wall_s = (segments[-1]["end"] - segments[0]["start"]).total_seconds()
-    wall_str = fmt_dur_seconds(wall_s)
-    header = f"active {active_str}"
-    if wall_s > total_active_s * 1.1:
-        header += f"  ({wall_str} wall)"
-    safe_add(stdscr, pr, x + 2, header, rw, DIM)
+    # Header
+    safe_add(stdscr, pr, x + 2, f"active {fmt_dur_seconds(active_s)}  ({len(tracks)} agents)", rw, DIM)
     pr += 1
 
-    # Row 1: Prompt markers — thin verticals with numbers
-    marker_line = list(" " * bar_w)
-    for i, seg in enumerate(segments):
-        col = _time_to_col(seg["start"], segments, total_active_s, bar_w)
-        num = str(i + 1)
-        if 0 <= col < bar_w:
-            marker_line[col] = "\u258f"  # ▏
-            # Place number after marker if room
-            for j, ch in enumerate(num):
-                if col + 1 + j < bar_w:
-                    marker_line[col + 1 + j] = ch
-    safe_add(stdscr, pr, x + 2, "prompts".ljust(label_w), rw, DIM)
-    safe_add(stdscr, pr, bar_x, "".join(marker_line)[:bar_w], rw, CYAN)
-    pr += 1
-
-    # Agent tracks: sorted by start time
-    running_ids = {a["agent_id"] for a in r_agents}
-    tracks = []
-    for a in sorted(all_agents, key=lambda a: a.get("started_at", "")):
-        running = a["agent_id"] in running_ids
-        a_start = parse_dt(a.get("started_at"))
-        a_end = parse_dt(a.get("stopped_at")) if a.get("stopped_at") else now_utc
-        if not a_start:
-            continue
-        tracks.append({
-            "label": (a.get("agent_type") or "agent")[:label_w],
-            "start": a_start,
-            "end": a_end,
-            "running": running,
-        })
-
-    # Scrollable agent rows
-    pinned_rows = 3  # header + markers + axis
-    agent_rows = max(1, h - pinned_rows)
+    # Agent bars
     scroll = state.get("detail_scroll", 0)
-    scroll = min(scroll, max(0, len(tracks) - agent_rows))
+    avail = h - 2  # header + axis
+    scroll = min(scroll, max(0, len(tracks) - avail))
     state["detail_scroll"] = scroll
-    visible_tracks = tracks[scroll:scroll + agent_rows]
+    visible = tracks[scroll:scroll + avail]
 
-    for track in visible_tracks:
+    for track in visible:
         if pr >= y + h - 1:
             break
         color = MAGENTA if track["running"] else DIM
-        safe_add(stdscr, pr, x + 2, track["label"][:label_w].ljust(label_w), rw, color)
 
-        col_start = _time_to_col(track["start"], segments, total_active_s, bar_w)
-        col_end = _time_to_col(track["end"], segments, total_active_s, bar_w)
-        col_end = max(col_start + 1, col_end)
+        # Bar position: simple fraction
+        frac_start = (track["start"] - window_start).total_seconds() / span
+        frac_end = (track["end"] - window_start).total_seconds() / span
+        col_s = int(frac_start * bar_w)
+        col_e = max(col_s + 1, int(frac_end * bar_w))
 
-        bar = "\u2591" * col_start + "\u2588" * (col_end - col_start)
+        bar = "\u2591" * col_s + "\u2588" * (col_e - col_s)
         if track["running"] and len(bar) > 0:
-            bar = bar[:-1] + "\u2593"  # ▓ pulse at trailing edge
+            bar = bar[:-1] + "\u2593"
         bar += "\u2591" * max(0, bar_w - len(bar))
-        safe_add(stdscr, pr, bar_x, bar[:bar_w], rw, color)
 
-        # Duration
         dur = fmt_dur(track["start"].isoformat(), track["end"].isoformat() if not track["running"] else None)
         if track["running"]:
-            dur = "\u25c6 " + dur  # ◆
+            dur = "\u25c6 " + dur
+
+        safe_add(stdscr, pr, x + 2, track["label"][:label_w].ljust(label_w), rw, color)
+        safe_add(stdscr, pr, bar_x, bar[:bar_w], rw, color)
         safe_add(stdscr, pr, bar_x + bar_w + 1, dur, rw, DIM)
         pr += 1
 
     # Scroll indicator
-    if len(tracks) > agent_rows:
-        indicator = f"({scroll+1}-{min(scroll+len(visible_tracks), len(tracks))}/{len(tracks)})"
-        safe_add(stdscr, pr, x + 2, indicator, rw, DIM)
-        pr += 1
+    if len(tracks) > avail:
+        safe_add(stdscr, pr, x + 2, f"({scroll+1}-{scroll+len(visible)}/{len(tracks)})", rw, DIM)
 
-    # Prompt list below agents (if room)
-    if pr < y + h - 2:
-        safe_add(stdscr, pr, x + 2, "\u2500" * (w - 4), rw, DIM)  # ─ separator
-        pr += 1
-    for i, seg in enumerate(segments):
-        if pr >= y + h - 1:
-            break
-        num = f"#{i+1}"
-        prompt_text = seg.get("prompt_text") or ""
-        dur = fmt_dur_seconds(seg["duration_s"])
-        line = f"{num:>3} {dur:>6}  {prompt_text}"
-        safe_add(stdscr, pr, x + 2, line[:w - 4], rw, DIM)
-        pr += 1
-
-    # Time axis (last row)
+    # Time axis
     axis_row = y + h - 1
-    if axis_row > pr - 1:
-        axis_chars = list("\u2500" * bar_w)  # ─
-        marks = [0, bar_w // 4, bar_w // 2, 3 * bar_w // 4, bar_w - 1]
-        for m in marks:
-            frac = m / max(1, bar_w - 1)
-            secs = int(frac * total_active_s)
-            label = fmt_dur_seconds(secs)
-            for j, ch in enumerate(label):
-                if m + j < bar_w:
-                    axis_chars[m + j] = ch
-        safe_add(stdscr, axis_row, bar_x, "".join(axis_chars)[:bar_w], rw, DIM)
+    axis = f"{'0s':<{bar_w//2}}{fmt_dur_seconds(span):>{bar_w//2}}"
+    safe_add(stdscr, axis_row, bar_x, axis[:bar_w], rw, DIM)
 
 
 def _format_smart_summary(tool_name, raw_response, max_lines=8, max_width=70):
