@@ -170,7 +170,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
         if "pid" not in cols:
             conn.execute("ALTER TABLE prompt ADD COLUMN pid INTEGER")
         te_cols = {r[1] for r in conn.execute("PRAGMA table_info(tool_event)")}
-        for col, ctype in [("tool_input", "TEXT"), ("tool_response", "TEXT"), ("tool_use_id", "TEXT"), ("duration_ms", "INTEGER"), ("is_error", "INTEGER DEFAULT 0"), ("error_message", "TEXT")]:
+        for col, ctype in [("tool_input", "TEXT"), ("tool_response", "TEXT"), ("tool_use_id", "TEXT"), ("duration_ms", "INTEGER"), ("is_error", "INTEGER DEFAULT 0"), ("error_message", "TEXT"), ("cwd", "TEXT")]:
             if col not in te_cols:
                 conn.execute(f"ALTER TABLE tool_event ADD COLUMN {col} {ctype}")
 

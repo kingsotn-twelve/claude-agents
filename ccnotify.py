@@ -220,7 +220,8 @@ class ClaudePromptTracker:
                     tool_input TEXT,
                     tool_response TEXT,
                     tool_use_id TEXT,
-                    duration_ms INTEGER
+                    duration_ms INTEGER,
+                    cwd TEXT
                 )
             """)
             conn.execute("""
@@ -280,10 +281,11 @@ class ClaudePromptTracker:
             return
         label = self._extract_tool_label(tool_name, tool_input)
         tool_use_id = data.get("tool_use_id", "")
+        cwd = data.get("cwd", "")
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO tool_event (session_id, tool_name, tool_label, tool_input, tool_use_id) VALUES (?, ?, ?, ?, ?)",
-                (session_id, tool_name, label, json.dumps(tool_input, default=str)[:4000], tool_use_id),
+                "INSERT INTO tool_event (session_id, tool_name, tool_label, tool_input, tool_use_id, cwd) VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, tool_name, label, json.dumps(tool_input, default=str)[:4000], tool_use_id, cwd),
             )
             # Lazy ring buffer: prune when count > 100, keep last 50
             count = conn.execute(
