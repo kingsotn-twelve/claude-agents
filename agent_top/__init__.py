@@ -750,9 +750,44 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
             "running": a["agent_id"] in running_ids,
         })
 
+    # Fallback: if no agents, build tracks from tool events
     if not tracks:
-        safe_add(stdscr, y + 1, x + 2, "(no agents)", rw, DIM)
-        return
+        session_tools = cache.get("session_tools", {})
+        tools = session_tools.get(target_sid, [])
+        if not tools:
+            safe_add(stdscr, y + 1, x + 2, "(no activity)", rw, DIM)
+            return
+        # Group tools into bursts (gaps > 5s = new track)
+        bursts = []
+        cur_start = None
+        cur_end = None
+        cur_count = 0
+        for t in tools:
+            t_start = parse_dt(t.get("created_at"))
+            if not t_start:
+                continue
+            dur_ms = t.get("duration_ms") or 0
+            t_end = t_start + timedelta(milliseconds=dur_ms) if dur_ms else t_start + timedelta(seconds=1)
+            if cur_start is None:
+                cur_start, cur_end, cur_count = t_start, t_end, 1
+            elif (t_start - cur_end).total_seconds() > 5:
+                bursts.append((cur_start, cur_end, cur_count))
+                cur_start, cur_end, cur_count = t_start, t_end, 1
+            else:
+                cur_end = max(cur_end, t_end)
+                cur_count += 1
+        if cur_start:
+            bursts.append((cur_start, cur_end, cur_count))
+        for b_start, b_end, b_count in bursts:
+            tracks.append({
+                "label": f"{b_count} tools",
+                "start": b_start,
+                "end": b_end,
+                "running": False,
+            })
+        if not tracks:
+            safe_add(stdscr, y + 1, x + 2, "(no activity)", rw, DIM)
+            return
 
     # Active window: earliest start → latest end
     window_start = min(t["start"] for t in tracks)
