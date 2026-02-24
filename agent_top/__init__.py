@@ -763,11 +763,15 @@ def _build_gantt_segments(prompts, tools, agents, now_utc):
             effective_end = min(a_stop or now_utc, window_end)
             last_activity = max(last_activity, effective_end)
 
+        # Skip segments with no real activity (no tools/agents fired)
+        if last_activity == seg_start:
+            continue
+
         seg_end = min(last_activity, window_end)
         duration_s = max(1.0, (seg_end - seg_start).total_seconds())
 
         segments.append({
-            "prompt_text": short_prompt(p.get("prompt", ""), 12),
+            "prompt_text": short_prompt(p.get("prompt", ""), 20),
             "start": seg_start,
             "end": seg_start + timedelta(seconds=duration_s),
             "duration_s": duration_s,
