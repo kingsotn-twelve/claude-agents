@@ -10,6 +10,9 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 DB="${AGENT_TOP_DB:-$HOME/.claude/ccnotify/ccnotify.db}"
 
+# Enable WAL mode for concurrent writes from parallel subshells
+sqlite3 "$DB" "PRAGMA journal_mode=WAL;" >/dev/null 2>&1
+
 COUNT="${1:-5}"
 MIN="${2:-5}"
 MAX="${3:-20}"

@@ -923,27 +923,42 @@ def _match_tools_to_agents(tools, agents, target_sid):
     agent_labels = {}
     unmatched = []
 
-    # Pair Task tool_events to agents by timestamp proximity (Task fires just before SubagentStart)
-    task_tools = [t for t in tools if t.get("_tool_name") == "Task"]
-    for agent in session_agents:
+    # Pair Task tool_events to agents 1:1 by timestamp proximity + type hint.
+    # Task fires just before SubagentStart; once matched, remove from pool.
+    from datetime import datetime as _dt
+    task_pool = [t for t in tools if t.get("_tool_name") == "Task"]
+    # Sort agents by start time so earliest agents match earliest Tasks
+    sorted_agents = sorted(session_agents, key=lambda a: a.get("started_at", ""))
+    used_tasks = set()
+    for agent in sorted_agents:
         a_start = agent.get("started_at", "")
+        a_type = agent.get("agent_type", "")
         best_task = None
-        best_delta = 6  # max 5 seconds
-        for tt in task_tools:
+        best_score = (6, 0)  # (delta_seconds, type_match_bonus) — lower delta + higher bonus wins
+        for i, tt in enumerate(task_pool):
+            if i in used_tasks:
+                continue
             tt_ts = tt.get("ts", "")
-            if tt_ts and a_start and tt_ts <= a_start:
-                try:
-                    from datetime import datetime as dt
-                    t1 = dt.fromisoformat(tt_ts.replace("Z", "+00:00")) if "T" in tt_ts else dt.strptime(tt_ts, "%Y-%m-%d %H:%M:%S")
-                    t2 = dt.fromisoformat(a_start.replace("Z", "+00:00")) if "T" in a_start else dt.strptime(a_start, "%Y-%m-%d %H:%M:%S")
-                    delta = abs((t2 - t1).total_seconds())
-                    if delta < best_delta:
-                        best_delta = delta
-                        best_task = tt
-                except Exception:
-                    pass
+            if not tt_ts or not a_start or tt_ts > a_start:
+                continue
+            try:
+                t1 = _dt.fromisoformat(tt_ts.replace("Z", "+00:00")) if "T" in tt_ts else _dt.strptime(tt_ts, "%Y-%m-%d %H:%M:%S")
+                t2 = _dt.fromisoformat(a_start.replace("Z", "+00:00")) if "T" in a_start else _dt.strptime(a_start, "%Y-%m-%d %H:%M:%S")
+                delta = abs((t2 - t1).total_seconds())
+            except Exception:
+                continue
+            if delta >= best_score[0] and best_task is not None:
+                continue
+            # Type hint: Task description often contains agent_type
+            type_bonus = 1 if a_type and a_type.lower() in tt.get("text", "").lower() else 0
+            score = (delta, -type_bonus)  # lower is better
+            if score < best_score:
+                best_score = score
+                best_task = (i, tt)
         if best_task:
-            agent_labels[agent["agent_id"]] = best_task.get("text", agent.get("agent_type", "agent"))
+            idx, tt = best_task
+            used_tasks.add(idx)
+            agent_labels[agent["agent_id"]] = tt.get("text", agent.get("agent_type", "agent"))
 
     # Assign non-Task tools to agents by time window + cwd
     for t in tools:
