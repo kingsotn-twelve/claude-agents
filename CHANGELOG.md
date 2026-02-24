@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0 — Feb 24, 2026
+
+### Gantt timeline
+
+Press Tab to switch to the TIMELINE view — a Gantt chart showing the entire session's activity as horizontal bars. Agent bars (magenta) show parallel execution, tool bursts (yellow) show main session work, and cyan `▸` prompt markers separate each turn. The x-axis spans the active window (first event → last event), so idle time before and after is excluded. Scroll with j/k.
+
+For local development, `python3 -m agent_top` now works without installing — changes take effect immediately.
+
 ## v1.3.0 — Feb 23, 2026
 
 ### Parallel agent tree grouping
