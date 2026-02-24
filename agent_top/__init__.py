@@ -792,6 +792,22 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
         safe_add(stdscr, y + 1, x + 2, "(no activity)", rw, DIM)
         return
 
+    # Interleave prompt separators between tracks
+    session_prompts_data = cache.get("session_prompts", {})
+    prompts_list = session_prompts_data.get(target_sid, [])
+    prompt_rows = []
+    for p in prompts_list:
+        p_text = (p.get("prompt") or "").replace("\n", " ").strip()
+        if p_text.startswith("<"):
+            continue
+        p_ts = parse_dt(p.get("created_at"))
+        if p_ts:
+            prompt_rows.append({"start": p_ts, "_is_prompt": True, "text": p_text})
+    # Merge prompts into tracks
+    merged = tracks + prompt_rows
+    merged.sort(key=lambda t: t["start"])
+    tracks = merged
+
     # Active window: earliest start → latest end
     window_start = min(t["start"] for t in tracks)
     window_end = max(t["end"] for t in tracks)
@@ -824,6 +840,14 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
     for track in visible:
         if pr >= y + h - 1:
             break
+
+        # Prompt separator row
+        if track.get("_is_prompt"):
+            text = track.get("text", "")[:w - 6]
+            safe_add(stdscr, pr, x + 2, f"\u25b8 {text}", rw, CYAN)
+            pr += 1
+            continue
+
         if track.get("_is_burst"):
             color = YELLOW
         elif track["running"]:
