@@ -286,7 +286,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
             try:
                 rows = []
                 for row in conn.execute(
-                    """SELECT tool_name, tool_label, created_at, tool_input, tool_response, duration_ms, is_error, error_message FROM tool_event
+                    """SELECT tool_name, tool_label, created_at, tool_input, tool_response, duration_ms, is_error, error_message, cwd FROM tool_event
                        WHERE session_id = ?
                        ORDER BY created_at DESC
                        LIMIT 200""",
