@@ -1017,6 +1017,7 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
             "_duration_ms": dur_ms,
             "_is_error": is_err,
             "_error_message": t.get("error_message", ""),
+            "_cwd": t.get("cwd", ""),
         })
     # Agents
     children = [a for a in r_agents if a["session_id"] == target_sid and a.get("agent_type")]
