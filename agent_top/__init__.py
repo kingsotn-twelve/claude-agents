@@ -911,6 +911,9 @@ def _match_tools_to_agents(tools, agents, target_sid):
         agent_labels: dict[agent_id] -> str  (human-readable label from the Task tool call)
         unmatched: [tool_event_dicts]  (tools not assigned to any agent)
     """
+    # Only match tool events, not prompts or other kinds
+    tools = [t for t in tools if t.get("kind") == "tool"]
+
     # Build agent time windows for this session
     session_agents = [a for a in agents if a.get("session_id") == target_sid]
     if not session_agents:
@@ -1179,7 +1182,7 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         in_active_group = focused and ev.get("_group") == cursor_group
         if in_active_group or is_cursor:
             color = kind_colors.get(kind, DIM)
-            if kind in ("agent", "agent_group") and not ev.get("running"):
+            if kind == "agent" and not ev.get("running"):
                 color = DIM
         else:
             color = DIM
