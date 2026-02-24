@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3.0 — Feb 23, 2026
+
+### Parallel agent tree grouping
+
+When Claude Code spawns parallel agents (via the `Task` tool), their tool calls now nest under collapsible agent group nodes in the tree view. Each agent appears as a `▼`/`▶` node with its description and duration, and its child tools indent one extra level beneath it. Press Space or Enter to collapse/expand individual agents.
+
+Tools are matched to agents using a combination of time windows and working directory (`cwd`), so even overlapping agents get correctly attributed. When multiple agents share the same type name (e.g. six `code-reviewer` agents), they're automatically disambiguated with sequence numbers (`#1`, `#2`, ...).
+
+Unmatched tools (those fired before/after/between agents) render at the normal indent level alongside agent groups.
+
 ## v1.2.1 — Feb 23, 2026
 
 ### Smarter tool labels
