@@ -903,6 +903,76 @@ def _render_tool_expansion(stdscr, ev, pr, col, rw, max_row, is_error=False):
     return rows_drawn
 
 
+def _match_tools_to_agents(tools, agents, target_sid):
+    """Match tool_events to agents by session_id + time window + cwd.
+
+    Returns:
+        agent_tools: dict[agent_id] -> [tool_event_dicts]  (tools belonging to each agent)
+        agent_labels: dict[agent_id] -> str  (human-readable label from the Task tool call)
+        unmatched: [tool_event_dicts]  (tools not assigned to any agent)
+    """
+    # Build agent time windows for this session
+    session_agents = [a for a in agents if a.get("session_id") == target_sid]
+    if not session_agents:
+        return {}, {}, tools
+
+    agent_tools = {a["agent_id"]: [] for a in session_agents}
+    agent_labels = {}
+    unmatched = []
+
+    # Pair Task tool_events to agents by timestamp proximity (Task fires just before SubagentStart)
+    task_tools = [t for t in tools if t.get("_tool_name") == "Task"]
+    for agent in session_agents:
+        a_start = agent.get("started_at", "")
+        best_task = None
+        best_delta = 6  # max 5 seconds
+        for tt in task_tools:
+            tt_ts = tt.get("ts", "")
+            if tt_ts and a_start and tt_ts <= a_start:
+                try:
+                    from datetime import datetime as dt
+                    t1 = dt.fromisoformat(tt_ts.replace("Z", "+00:00")) if "T" in tt_ts else dt.strptime(tt_ts, "%Y-%m-%d %H:%M:%S")
+                    t2 = dt.fromisoformat(a_start.replace("Z", "+00:00")) if "T" in a_start else dt.strptime(a_start, "%Y-%m-%d %H:%M:%S")
+                    delta = abs((t2 - t1).total_seconds())
+                    if delta < best_delta:
+                        best_delta = delta
+                        best_task = tt
+                except Exception:
+                    pass
+        if best_task:
+            agent_labels[agent["agent_id"]] = best_task.get("text", agent.get("agent_type", "agent"))
+
+    # Assign non-Task tools to agents by time window + cwd
+    for t in tools:
+        if t.get("_tool_name") == "Task":
+            continue  # Task tool_events become agent group headers, not children
+        t_ts = t.get("ts", "")
+        t_cwd = t.get("_cwd", "")
+        candidates = []
+        for agent in session_agents:
+            a_start = agent.get("started_at", "")
+            a_stop = agent.get("stopped_at")
+            if not a_start:
+                continue
+            if t_ts >= a_start and (a_stop is None or t_ts <= a_stop):
+                candidates.append(agent)
+        if len(candidates) == 1:
+            agent_tools[candidates[0]["agent_id"]].append(t)
+        elif len(candidates) > 1:
+            # Prefer cwd match
+            cwd_match = [a for a in candidates if a.get("cwd") and a["cwd"] == t_cwd]
+            if len(cwd_match) == 1:
+                agent_tools[cwd_match[0]["agent_id"]].append(t)
+            else:
+                # Fall back to most recently started
+                best = max(candidates, key=lambda a: a.get("started_at", ""))
+                agent_tools[best["agent_id"]].append(t)
+        else:
+            unmatched.append(t)
+
+    return agent_tools, agent_labels, unmatched
+
+
 def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
     """Interleaved timeline: prompts, tools, and agents in chronological order (newest first)."""
     active_all = cache.get("active_all", [])
