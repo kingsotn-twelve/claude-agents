@@ -156,6 +156,7 @@ def query_db(db_path: str, stats_range_idx: int = 2) -> dict:
         "top_agents": [],
         "top_tools": [],
         "error_stats": [],
+        "session_prompts": {},
         "activity": {},
     }
     if not os.path.exists(db_path):
