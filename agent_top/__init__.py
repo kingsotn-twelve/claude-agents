@@ -1028,12 +1028,44 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         timeline.append({"ts": a.get("started_at", ""), "kind": "agent", "text": f"{a['agent_type']}  {adur}",
                          "running": running})
 
-    # Group by prompt: tools AFTER a prompt are its children
-    timeline.sort(key=lambda e: e.get("ts", ""))  # sort chronologically
-    groups = []  # list of (prompt_event_or_None, [child_events])
+    # Match tools to agents
+    all_agents = r_agents + c_agents
+    agent_tools, agent_labels, unmatched_tools = _match_tools_to_agents(timeline, all_agents, target_sid)
+
+    # Build agent group events
+    agent_group_events = []
+    for a in children + completed:
+        aid = a["agent_id"]
+        a_tools = agent_tools.get(aid, [])
+        adur = fmt_dur(a["started_at"], a.get("stopped_at"))
+        running = a in children
+        label = agent_labels.get(aid, a["agent_type"])
+        agent_group_events.append({
+            "ts": a.get("started_at", ""),
+            "kind": "agent_group",
+            "text": f"{label}  {adur}",
+            "running": running,
+            "_agent_id": aid,
+            "_children": a_tools,
+            "_child_count": len(a_tools),
+        })
+
+    # Merge: prompts, unmatched tools, agent groups — sorted chronologically
+    merged = []
+    for ev in timeline:
+        if ev["kind"] == "prompt":
+            merged.append(ev)
+    for ev in unmatched_tools:
+        merged.append(ev)
+    for ev in agent_group_events:
+        merged.append(ev)
+    merged.sort(key=lambda e: e.get("ts", ""))
+
+    # Group by prompt: events AFTER a prompt are its children
+    groups = []
     current_prompt = None
     current_children = []
-    for ev in timeline:
+    for ev in merged:
         if ev["kind"] == "prompt":
             if current_prompt is not None or current_children:
                 groups.append((current_prompt, current_children))
@@ -1045,20 +1077,40 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         groups.append((current_prompt, current_children))
     # Reverse so newest prompt is first; children stay in execution order
     groups.reverse()
-    # Per-prompt collapse: space toggles individual prompts open/closed
+
+    # Per-prompt collapse + agent collapse: expand into final timeline
     collapsed = state.setdefault("_collapsed_prompts", set())
+    collapsed_agents = state.setdefault("_collapsed_agents", set())
     timeline = []
-    for prompt_ev, children in groups:
+    for prompt_ev, prompt_children in groups:
         if prompt_ev:
             prompt_key = prompt_ev.get("ts", "")
             prompt_ev["_prompt_key"] = prompt_key
-            prompt_ev["_child_count"] = len(children)
+            # Count all children including nested agent tool children
+            total = 0
+            for c in prompt_children:
+                if c.get("kind") == "agent_group":
+                    total += 1 + c.get("_child_count", 0)
+                else:
+                    total += 1
+            prompt_ev["_child_count"] = total
             prompt_ev["_collapsed"] = prompt_key in collapsed
             timeline.append(prompt_ev)
             if prompt_key not in collapsed:
-                timeline.extend(children)
+                for child in prompt_children:
+                    if child.get("kind") == "agent_group":
+                        aid = child.get("_agent_id", "")
+                        is_collapsed = aid in collapsed_agents
+                        child["_collapsed"] = is_collapsed
+                        timeline.append(child)
+                        if not is_collapsed:
+                            for agent_tool in child.get("_children", []):
+                                agent_tool["_under_agent"] = True
+                                timeline.append(agent_tool)
+                    else:
+                        timeline.append(child)
         else:
-            timeline.extend(children)
+            timeline.extend(prompt_children)
 
     # Tag each event with its prompt group index so we can dim non-active groups
     group_idx = -1
