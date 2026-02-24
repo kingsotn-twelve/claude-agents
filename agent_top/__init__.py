@@ -912,6 +912,20 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
         safe_add(stdscr, pr, x + 2, indicator, rw, DIM)
         pr += 1
 
+    # Prompt list below agents (if room)
+    if pr < y + h - 2:
+        safe_add(stdscr, pr, x + 2, "\u2500" * (w - 4), rw, DIM)  # ─ separator
+        pr += 1
+    for i, seg in enumerate(segments):
+        if pr >= y + h - 1:
+            break
+        num = f"#{i+1}"
+        prompt_text = seg.get("prompt_text") or ""
+        dur = fmt_dur_seconds(seg["duration_s"])
+        line = f"{num:>3} {dur:>6}  {prompt_text}"
+        safe_add(stdscr, pr, x + 2, line[:w - 4], rw, DIM)
+        pr += 1
+
     # Time axis (last row)
     axis_row = y + h - 1
     if axis_row > pr - 1:
