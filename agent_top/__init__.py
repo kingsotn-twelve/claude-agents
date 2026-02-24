@@ -844,21 +844,19 @@ def _draw_viz_gantt(stdscr, y, x, h, w, cache, state):
     safe_add(stdscr, pr, x + 2, header, rw, DIM)
     pr += 1
 
-    # Row 1: Prompt markers
-    marker_chars = list("\u2500" * bar_w)  # ─ base line
+    # Row 1: Prompt markers — thin verticals with numbers
+    marker_line = list(" " * bar_w)
     for i, seg in enumerate(segments):
         col = _time_to_col(seg["start"], segments, total_active_s, bar_w)
+        num = str(i + 1)
         if 0 <= col < bar_w:
-            marker_chars[col] = "\u258f"  # ▏
-    safe_add(stdscr, pr, x + 2, " " * label_w, rw, DIM)
-    safe_add(stdscr, pr, bar_x, "".join(marker_chars)[:bar_w], rw, CYAN)
-    # Prompt labels
-    for i, seg in enumerate(segments):
-        col = _time_to_col(seg["start"], segments, total_active_s, bar_w)
-        lbl = seg.get("prompt_text") or f"P{i+1}"
-        lbl = lbl[:8]
-        if 0 <= col < bar_w and col + len(lbl) < bar_w:
-            safe_add(stdscr, pr, bar_x + col, lbl, rw, CYAN)
+            marker_line[col] = "\u258f"  # ▏
+            # Place number after marker if room
+            for j, ch in enumerate(num):
+                if col + 1 + j < bar_w:
+                    marker_line[col + 1 + j] = ch
+    safe_add(stdscr, pr, x + 2, "prompts".ljust(label_w), rw, DIM)
+    safe_add(stdscr, pr, bar_x, "".join(marker_line)[:bar_w], rw, CYAN)
     pr += 1
 
     # Agent tracks: sorted by start time
