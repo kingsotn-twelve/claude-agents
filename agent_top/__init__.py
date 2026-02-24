@@ -1149,8 +1149,8 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
     visible = timeline[scroll:scroll + visible_rows]
 
     pr = y
-    kind_colors = {"prompt": WHITE, "tool": YELLOW, "agent": MAGENTA}
-    kind_icons = {"prompt": "\u25b8", "tool": "\u2502", "agent": "\u25c6"}
+    kind_colors = {"prompt": WHITE, "tool": YELLOW, "agent": MAGENTA, "agent_group": MAGENTA}
+    kind_icons = {"prompt": "\u25b8", "tool": "\u2502", "agent": "\u25c6", "agent_group": "\u25c6"}
     focused = state.get("focus") == "right"
 
     # Find which group the cursor belongs to
@@ -1171,13 +1171,20 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
         elif kind == "prompt":
             icon = "\u25bc"  # ▼ expanded
             suffix = ""
+        elif kind == "agent_group" and ev.get("_collapsed"):
+            icon = "\u25b6"  # ▶ collapsed
+            n = ev.get("_child_count", 0)
+            suffix = f"  ({n})" if n else ""
+        elif kind == "agent_group":
+            icon = "\u25bc"  # ▼ expanded
+            suffix = ""
         else:
             icon = kind_icons.get(kind, " ")
             suffix = ""
         in_active_group = focused and ev.get("_group") == cursor_group
         if in_active_group or is_cursor:
             color = kind_colors.get(kind, DIM)
-            if kind == "agent" and not ev.get("running"):
+            if kind in ("agent", "agent_group") and not ev.get("running"):
                 color = DIM
         else:
             color = DIM
@@ -1189,13 +1196,18 @@ def _draw_viz_tree(stdscr, y, x, h, w, cache, state):
             color = RED
 
         ts = fmt_time(ev.get("ts", ""))
-        # Indent tools/agents under their prompt
-        indent = 0 if kind == "prompt" else 2
+        # Indent: prompt=0, agent_group/tool=2, tool-under-agent=4
+        if kind == "prompt":
+            indent = 0
+        elif ev.get("_under_agent"):
+            indent = 4
+        else:
+            indent = 2
         col_start = x + 2 + indent
         icon_col = x + 11 + indent
         text_w = w - 15 - indent  # available width for text after icon (minus borders)
         text = ev["text"]
-        if suffix and kind == "prompt" and ev.get("_collapsed"):
+        if suffix and kind in ("prompt", "agent_group") and ev.get("_collapsed"):
             text = text[:text_w - len(suffix)] + suffix
 
         if kind == "prompt" and not ev.get("_collapsed") and len(text) > text_w:
