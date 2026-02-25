@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-top"
-version = "1.4.0"
+version = "1.4.1"
 description = "Live terminal dashboard for Claude Code sessions and agents"
 readme = "README.md"
 requires-python = ">=3.10"

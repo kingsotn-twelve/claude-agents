@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.1 — Feb 25, 2026
+
+### Cleanup
+
+Removed stale files per code review: design docs with API key pseudocode, duplicate standalone script, and synced the package ccnotify copy with the live version.
+
 ## v1.4.0 — Feb 24, 2026
 
 ### Gantt timeline
